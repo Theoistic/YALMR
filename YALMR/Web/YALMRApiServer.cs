@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -296,6 +297,7 @@ public sealed class YALMRApiServer : IAsyncDisposable
         await response.BodyWriter.FlushAsync(ct);
 
         InferenceUsage? lastUsage = null;
+        var sw = Stopwatch.StartNew();
 
         await foreach (var chunk in stream.WithCancellation(ct))
         {
@@ -333,7 +335,8 @@ public sealed class YALMRApiServer : IAsyncDisposable
                 lastUsage = chunk.Usage;
         }
 
-        var endEvent = new SseEndEvent("stop", lastUsage is null ? null : ToUsage(lastUsage));
+        sw.Stop();
+        var endEvent = new SseEndEvent("stop", lastUsage is null ? null : ToUsage(lastUsage), sw.ElapsedMilliseconds);
         await response.WriteAsync($"event: end\ndata: {Json(endEvent)}\n\n", ct);
         await response.BodyWriter.FlushAsync(ct);
     }
@@ -407,7 +410,8 @@ public sealed class YALMRApiServer : IAsyncDisposable
 
     private sealed record SseEndEvent(
         [property: JsonPropertyName("finish_reason")] string FinishReason,
-        [property: JsonPropertyName("usage")] ApiUsage? Usage);
+        [property: JsonPropertyName("usage")] ApiUsage? Usage,
+        [property: JsonPropertyName("elapsed_ms")] long ElapsedMs);
 
     // ─── Disposal ─────────────────────────────────────────────────────────────
 

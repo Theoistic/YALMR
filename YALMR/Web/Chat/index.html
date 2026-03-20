@@ -517,6 +517,19 @@
         .msg-text th { background: var(--surface); }
         .msg-text a { color: var(--accent); text-decoration: none; }
         .msg-text a:hover { text-decoration: underline; }
+
+        /* Stats bar at the bottom of assistant messages */
+        .msg-stats {
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+            font-size: 0.71rem;
+            color: var(--muted);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
@@ -570,6 +583,7 @@
         let pendingImages        = [];
         let modelThinkingCapable = false;
         let thinkingOn           = true;
+        let modelContextLength   = 0;
 
         // Add message to the chat UI
         function addMessage(role, text = '', images = []) {
@@ -613,6 +627,8 @@
                     thinkToggleBtn.hidden = false;
                     thinkToggleBtn.classList.add('active');
                 }
+
+                modelContextLength = model.context_length || 0;
 
                 sendBtn.disabled = false;
                 promptEl.focus();
@@ -704,6 +720,23 @@
                     onToken: (_delta, full) => {
                         typingEl.classList.remove('active');
                         textOf(assistantEl).innerHTML = marked.parse(full.trimStart());
+                        messagesEl.scrollTop = messagesEl.scrollHeight;
+                    },
+                    onEnd: (data) => {
+                        if (!data?.usage) return;
+                        const { completion_tokens, total_tokens } = data.usage;
+                        const elapsedSec = (data.elapsed_ms || 0) / 1000;
+                        const tps = elapsedSec > 0 ? (completion_tokens / elapsedSec).toFixed(1) : '—';
+                        const ctxStr = modelContextLength
+                            ? `${total_tokens.toLocaleString()} / ${modelContextLength.toLocaleString()} ctx`
+                            : `${total_tokens.toLocaleString()} ctx`;
+                        const statsEl = document.createElement('div');
+                        statsEl.className = 'msg-stats';
+                        statsEl.innerHTML =
+                            `<span>${completion_tokens} tok</span>` +
+                            `<span>${ctxStr}</span>` +
+                            `<span>${tps} tok/s</span>`;
+                        assistantEl.appendChild(statsEl);
                         messagesEl.scrollTop = messagesEl.scrollHeight;
                     }
                 });
