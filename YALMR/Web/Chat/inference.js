@@ -44,7 +44,7 @@ class YALMRClient {
      * @param {{ stream?: boolean, images?: string[], onToken?: (delta: string, full: string) => void, onEnd?: (event: object) => void }} options
      * @returns {Promise<string>} The complete assistant reply.
      */
-    async send(message, { stream = true, images = [], onToken = null, onThinking = null, onToolCall = null, onToolResult = null, onEnd = null } = {}) {
+    async send(message, { stream = true, images = [], enableThinking = null, onToken = null, onThinking = null, onToolCall = null, onToolResult = null, onEnd = null } = {}) {
         if (!this.#sessionId) throw new Error('No active session — call createSession() first.');
 
         let bodyObj;
@@ -55,6 +55,7 @@ class YALMRClient {
         } else {
             bodyObj = { message, stream };
         }
+        if (enableThinking !== null) bodyObj.enable_thinking = enableThinking;
 
         const res = await fetch(`${this.#baseUrl}/v1/sessions/${this.#sessionId}/chat`, {
             method: 'POST',

@@ -64,6 +64,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
     public string? VisionDisabledReason => _engine.VisionDisabledReason;
     public IReadOnlyList<ChatMessage> History => _history;
     public ResponseObject? LastResponse { get; private set; }
+    public InferenceOptions DefaultInference => _defaultInference;
 
     /// <summary>
     /// Gets the underlying inference engine used by this session.
@@ -336,6 +337,40 @@ public sealed class Session : IAsyncDisposable, IDisposable
         try
         {
             await foreach (var chunk in GenerateCoreAsync(message, new ResponseExecutionContext(_defaultInference, new Dictionary<string, RemoteToolBinding>(StringComparer.Ordinal)), ct).ConfigureAwait(false))
+            {
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            if (isReentrant)
+                RestoreAfterReentrantCall(savedHistory!);
+            else
+                s_reentrancyOwner.Value = null;
+        }
+    }
+
+    /// <summary>
+    /// Streams assistant output with a per-request inference options override.
+    /// </summary>
+    public async IAsyncEnumerable<ChatResponseChunk> GenerateAsync(
+        ChatMessage message,
+        InferenceOptions inferenceOverride,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+
+        bool isReentrant = s_reentrancyOwner.Value == this;
+        List<ChatMessage>? savedHistory = null;
+
+        if (isReentrant)
+            savedHistory = SaveHistorySnapshot();
+        else
+            s_reentrancyOwner.Value = this;
+
+        try
+        {
+            await foreach (var chunk in GenerateCoreAsync(message, new ResponseExecutionContext(inferenceOverride, new Dictionary<string, RemoteToolBinding>(StringComparer.Ordinal)), ct).ConfigureAwait(false))
             {
                 yield return chunk;
             }

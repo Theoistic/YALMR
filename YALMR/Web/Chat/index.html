@@ -441,6 +441,82 @@
             max-height: 150px;
             overflow-y: auto;
         }
+
+        /* Thinking toggle button */
+        #think-toggle {
+            height: 46px;
+            width: 46px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--surface);
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+            flex-shrink: 0;
+        }
+
+            #think-toggle:hover { color: var(--text); border-color: var(--accent); }
+            #think-toggle.active { color: var(--accent); border-color: var(--accent); background: rgba(124,106,247,0.08); }
+
+            #think-toggle svg {
+                width: 18px;
+                height: 18px;
+                fill: currentColor;
+            }
+
+        /* Markdown rendering in assistant bubbles */
+        .message.assistant .msg-text { white-space: normal; }
+
+        .msg-text p { margin: 0 0 0.5em; }
+        .msg-text p:last-child { margin-bottom: 0; }
+
+        .msg-text pre {
+            background: #0d0d0d;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            overflow-x: auto;
+            margin: 6px 0;
+        }
+
+        .msg-text code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.82rem;
+        }
+
+        .msg-text pre code { color: #e2e2e2; background: none; padding: 0; }
+
+        .msg-text :not(pre) > code {
+            background: #1e1e1e;
+            padding: 1px 5px;
+            border-radius: 4px;
+            color: #c9d1d9;
+        }
+
+        .msg-text ul, .msg-text ol { padding-left: 1.4em; margin: 4px 0; }
+        .msg-text li { margin: 2px 0; }
+
+        .msg-text h1, .msg-text h2, .msg-text h3, .msg-text h4 {
+            font-weight: 600;
+            margin: 8px 0 4px;
+            line-height: 1.3;
+        }
+
+        .msg-text blockquote {
+            border-left: 3px solid var(--border);
+            margin: 4px 0;
+            padding-left: 10px;
+            color: var(--muted);
+        }
+
+        .msg-text table { border-collapse: collapse; margin: 6px 0; }
+        .msg-text th, .msg-text td { border: 1px solid var(--border); padding: 4px 8px; }
+        .msg-text th { background: var(--surface); }
+        .msg-text a { color: var(--accent); text-decoration: none; }
+        .msg-text a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -461,6 +537,9 @@
             <button id="attach" title="Attach images">
                 <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             </button>
+            <button id="think-toggle" title="Reasoning on" hidden>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2l1.34 3.99L17 7.34l-4.16 1.32L11.5 13l-1.34-4.34L2 7.34l4.16-1.35zm7 10.5l.75 2.25 2.25.75-2.25.75-.75 2.25-.75-2.25-2.25-.75 2.25-.75zm-12 2.5l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5z"/></svg>
+            </button>
             <textarea id="prompt"
                       rows="1"
                       placeholder="Type a message..."
@@ -472,6 +551,7 @@
         <div class="footer-note">Shift + Enter for newline &bull; Enter to send</div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
     <script src="/chat/inference.js"></script>
     <script>
         const client             = new YALMRClient();
@@ -479,12 +559,17 @@
         const promptEl           = document.getElementById('prompt');
         const sendBtn            = document.getElementById('send');
         const attachBtn          = document.getElementById('attach');
+        const thinkToggleBtn     = document.getElementById('think-toggle');
         const fileInput          = document.getElementById('file-input');
         const attachmentPreview  = document.getElementById('attachment-preview');
         const typingEl           = document.getElementById('typing-indicator');
         const modelLabel         = document.getElementById('model-label');
 
-        let pendingImages = [];
+        marked.use({ gfm: true, breaks: true });
+
+        let pendingImages        = [];
+        let modelThinkingCapable = false;
+        let thinkingOn           = true;
 
         // Add message to the chat UI
         function addMessage(role, text = '', images = []) {
@@ -520,6 +605,13 @@
                 if (!model.vision) {
                     attachBtn.style.display = 'none';
                     attachmentPreview.style.display = 'none';
+                }
+
+                if (model.thinking) {
+                    modelThinkingCapable = true;
+                    thinkingOn = true;
+                    thinkToggleBtn.hidden = false;
+                    thinkToggleBtn.classList.add('active');
                 }
 
                 sendBtn.disabled = false;
@@ -575,6 +667,7 @@
                 await client.send(text, {
                     stream: true,
                     images,
+                    enableThinking: modelThinkingCapable ? thinkingOn : null,
                     onThinking: (delta) => {
                         typingEl.classList.remove('active');
                         ensureThinking();
@@ -610,7 +703,7 @@
                     },
                     onToken: (_delta, full) => {
                         typingEl.classList.remove('active');
-                        textOf(assistantEl).textContent = full.trimStart();
+                        textOf(assistantEl).innerHTML = marked.parse(full.trimStart());
                         messagesEl.scrollTop = messagesEl.scrollHeight;
                     }
                 });
@@ -627,6 +720,12 @@
         // --- Event Listeners ---
 
         sendBtn.addEventListener('click', handleSend);
+
+        thinkToggleBtn.addEventListener('click', () => {
+            thinkingOn = !thinkingOn;
+            thinkToggleBtn.classList.toggle('active', thinkingOn);
+            thinkToggleBtn.title = thinkingOn ? 'Reasoning on' : 'Reasoning off';
+        });
 
         promptEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {

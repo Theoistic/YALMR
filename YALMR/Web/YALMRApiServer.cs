@@ -219,9 +219,14 @@ public sealed class YALMRApiServer : IAsyncDisposable
             ? new ChatMessage("user", Parts: ToRuntimeParts(parts))
             : new ChatMessage("user", req.Message);
 
+        // Apply per-request inference overrides (e.g. enable_thinking toggle).
+        var inference = req.EnableThinking.HasValue
+            ? session.DefaultInference with { EnableThinking = req.EnableThinking }
+            : session.DefaultInference;
+
         if (req.Stream)
         {
-            await WriteSseAsync(ctx.Response, session.GenerateAsync(userMessage, ct), chatId, string.Empty, ct);
+            await WriteSseAsync(ctx.Response, session.GenerateAsync(userMessage, inference, ct), chatId, string.Empty, ct);
             return Results.Empty;
         }
 

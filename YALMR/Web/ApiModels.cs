@@ -151,6 +151,7 @@ public sealed record SessionChatRequest
     [JsonPropertyName("message")] public string Message { get; init; } = string.Empty;
     [JsonPropertyName("parts")] public IReadOnlyList<ApiContentPart>? Parts { get; init; }
     [JsonPropertyName("stream")] public bool Stream { get; init; }
+    [JsonPropertyName("enable_thinking")] public bool? EnableThinking { get; init; }
 }
 
 public sealed record SessionChatResponse(
