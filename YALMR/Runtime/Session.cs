@@ -125,6 +125,17 @@ public sealed class Session : IAsyncDisposable, IDisposable
         ResetCore(clearResponses: true);
     }
 
+    /// <summary>
+    /// Adds a message directly to the session history without triggering generation.
+    /// Useful for seeding the conversation with a system prompt or prior context.
+    /// </summary>
+    public void PrimeHistory(ChatMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ThrowIfDisposed();
+        _history.Add(message);
+    }
+
     private void ResetCore(bool clearResponses)
     {
         _history.Clear();

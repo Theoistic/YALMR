@@ -98,6 +98,22 @@ public sealed class YALMRServer : IAsyncDisposable, IDisposable
     /// </summary>
     public bool IsModelLoaded(string modelId) => _models.ContainsKey(modelId);
 
+    /// <summary>
+    /// Returns <c>true</c> and populates <paramref name="options"/> when a model with
+    /// the given identifier is loaded; otherwise returns <c>false</c>.
+    /// </summary>
+    public bool TryGetModelOptions(string modelId, [NotNullWhen(true)] out SessionOptions? options)
+    {
+        if (_models.TryGetValue(modelId, out var loaded))
+        {
+            options = loaded.Options;
+            return true;
+        }
+
+        options = null;
+        return false;
+    }
+
     // -------------------------------------------------------------------------
     // Session lifecycle
     // -------------------------------------------------------------------------
