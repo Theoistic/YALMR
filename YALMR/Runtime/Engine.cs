@@ -140,6 +140,11 @@ public sealed class Engine : IAsyncDisposable, IDisposable
     public string TokenToString(int token) => Llama.TokenToString(_model, token);
 
     /// <summary>
+    /// Writes the raw UTF-8 bytes for a token into <paramref name="buf"/> and returns the byte count.
+    /// </summary>
+    public int TokenToBytes(int token, byte[] buf) => Llama.TokenToBytes(_model, token, buf);
+
+    /// <summary>
     /// Checks whether a token signals end of generation.
     /// </summary>
     public bool IsEndOfGeneration(int token) => Llama.IsEndOfGeneration(_model, token);

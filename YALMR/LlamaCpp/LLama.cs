@@ -935,6 +935,20 @@ public static class Llama
     }
 
     /// <summary>
+    /// Writes the raw UTF-8 bytes for a token into <paramref name="buf"/> and returns the byte count.
+    /// Use this with a stateful <see cref="System.Text.Decoder"/> to correctly handle multi-byte
+    /// characters that are split across consecutive tokens.
+    /// </summary>
+    public static int TokenToBytes(Model model, int token, byte[] buf, bool special = true)
+    {
+        Vocab vocab = GetVocab(model);
+        int n = llama_token_to_piece(vocab.Ptr, token, buf, buf.Length, 0, special);
+        if (n < 0)
+            throw new InvalidOperationException($"llama_token_to_piece failed: buffer too small (need {-n} bytes).");
+        return n;
+    }
+
+    /// <summary>
     /// Returns whether a token terminates generation.
     /// </summary>
     public static bool IsEndOfGeneration(Model model, int token)

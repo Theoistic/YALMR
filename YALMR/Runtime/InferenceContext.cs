@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using YALMR.Diagnostics;
 using YALMR.LlamaCpp;
 
@@ -20,6 +21,12 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
     private Llama.Context _context;
     private bool _cacheContainsVision;
     private bool _disposed;
+
+    // Stateful UTF-8 decoder for token streaming — buffers incomplete multi-byte sequences
+    // (e.g. emojis split across tokens) so they are emitted whole instead of as U+FFFD.
+    private readonly Decoder _utf8Decoder = Encoding.UTF8.GetDecoder();
+    private readonly byte[] _tokenBuf = new byte[256];
+    private readonly char[] _charBuf = new char[257]; // UTF8.GetMaxCharCount(256) == 257
 
     internal InferenceContext(
         Engine engine,
@@ -76,6 +83,7 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
 
         var samplerChain = Llama.CreateSamplerChain(options, _random);
         int emittedTokens = 0;
+        _utf8Decoder.Reset();
         try
         {
             for (int i = 0; i < maxOutputTokens; i++)
@@ -93,7 +101,9 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
                     yield break;
                 }
 
-                string piece = _engine.TokenToString(token);
+                int byteCount = _engine.TokenToBytes(token, _tokenBuf);
+                int charCount = _utf8Decoder.GetChars(_tokenBuf, 0, byteCount, _charBuf, 0, flush: false);
+                string piece = new string(_charBuf, 0, charCount);
                 emittedTokens++;
 
                 yield return new InferenceToken(token, piece, false);
