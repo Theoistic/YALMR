@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="YALMR/YALMR.csproj" />
+  <Project Path="YALMRCli/YALMRCli.csproj" />
+</Solution>
