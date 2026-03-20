@@ -17,7 +17,7 @@ if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalI
 {
     string serveModel = args.Length > 1 && !args[1].StartsWith('-')
         ? args[1]
-        : @"C:\Users\theo\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf";
+        : @"C:\Users\Theo\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf";
 
     string serveUrl = "http://localhost:5000";
     for (int i = 1; i < args.Length - 1; i++)
@@ -41,7 +41,7 @@ if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalI
             MaxInputTokens:        32768,
             ReservedForGeneration: 8192,
             Strategy:              ContextCompactionStrategy.PinnedSystemFifo),
-        DefaultInference = new InferenceOptions { EnableThinking = true, MaxOutputTokens = 8192 },
+        DefaultInference = new InferenceOptions { MaxOutputTokens = 8192 },
         GpuLayers        = 99,
         FlashAttention   = true,
         KvCacheTypeK     = KvCacheQuantization.Q8_0,
@@ -334,6 +334,8 @@ static void PrintHelp()
     Console.WriteLine("CLI usage:");
     Console.WriteLine("  YALMRCli [model.gguf]                         interactive REPL");
     Console.WriteLine("  YALMRCli serve [model.gguf] [--url <url>]     start web API + chat UI");
+    Console.WriteLine();
+    Console.WriteLine("  Reasoning and vision capabilities are detected automatically from the model.");
     Console.WriteLine();
     Console.WriteLine("REPL commands:");
     Console.WriteLine("  /help              show this help");

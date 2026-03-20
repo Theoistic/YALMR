@@ -16,7 +16,9 @@ public sealed record ModelInfo(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("object")] string Object,
     [property: JsonPropertyName("loaded")] bool Loaded,
-    [property: JsonPropertyName("context_length")] int ContextLength);
+    [property: JsonPropertyName("context_length")] int ContextLength,
+    [property: JsonPropertyName("vision")] bool Vision = false,
+    [property: JsonPropertyName("thinking")] bool Thinking = false);
 
 public sealed record ModelsResponse(
     [property: JsonPropertyName("data")] IReadOnlyList<ModelInfo> Data);

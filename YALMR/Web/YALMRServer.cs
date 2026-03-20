@@ -49,7 +49,19 @@ public sealed class YALMRServer : IAsyncDisposable, IDisposable
                 return false;
 
             var engine = await Engine.CreateAsync(options, ct);
-            _models[modelId] = (engine, options);
+
+            // Reconcile EnableThinking with what the model's chat template actually supports.
+            // This overrides any manually set value so the server always behaves correctly
+            // without needing a CLI flag.
+            var effectiveOptions = options with
+            {
+                DefaultInference = (options.DefaultInference ?? new InferenceOptions()) with
+                {
+                    EnableThinking = engine.ThinkingEnabled
+                }
+            };
+
+            _models[modelId] = (engine, effectiveOptions);
             return true;
         }
         finally
@@ -111,6 +123,23 @@ public sealed class YALMRServer : IAsyncDisposable, IDisposable
         }
 
         options = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns whether the loaded model supports vision and/or thinking (chain-of-thought).
+    /// </summary>
+    public bool TryGetModelCapabilities(string modelId, out bool visionEnabled, out bool thinkingEnabled)
+    {
+        if (_models.TryGetValue(modelId, out var loaded))
+        {
+            visionEnabled   = loaded.Engine.VisionEnabled;
+            thinkingEnabled = loaded.Engine.ThinkingEnabled;
+            return true;
+        }
+
+        visionEnabled   = false;
+        thinkingEnabled = false;
         return false;
     }
 

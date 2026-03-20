@@ -34,6 +34,12 @@ public sealed class Engine : IAsyncDisposable, IDisposable
     public string ImageToken => _imageToken;
 
     /// <summary>
+    /// True when the model's chat template contains thinking/reasoning markers
+    /// (<c>&lt;think&gt;</c> tags or <c>enable_thinking</c> variable).
+    /// </summary>
+    public bool ThinkingEnabled => DetectThinkingSupport(_template);
+
+    /// <summary>
     /// True when the loaded model has no chat template and can only produce embeddings.
     /// </summary>
     public bool IsEmbeddingOnly => _template is null;
@@ -232,6 +238,15 @@ public sealed class Engine : IAsyncDisposable, IDisposable
         const string qwenVisionToken = "<|vision_start|><|image_pad|><|vision_end|>";
         return template?.Contains(qwenVisionToken, StringComparison.Ordinal) == true ? qwenVisionToken : string.Empty;
     }
+
+    /// <summary>
+    /// Heuristic: a template supports thinking when it references &lt;think&gt; tags or
+    /// the <c>enable_thinking</c> variable used by Qwen3, QwQ, DeepSeek-R1, etc.
+    /// </summary>
+    private static bool DetectThinkingSupport(string? template) =>
+        template is not null &&
+        (template.Contains("<think>", StringComparison.Ordinal) ||
+         template.Contains("enable_thinking", StringComparison.Ordinal));
 
     private static void ValidateMessages(IReadOnlyList<ChatMessage> messages)
     {

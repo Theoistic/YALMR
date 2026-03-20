@@ -516,6 +516,12 @@
                 const model = models[0];
                 await client.createSession(model.id);
                 modelLabel.textContent = model.id;
+
+                if (!model.vision) {
+                    attachBtn.style.display = 'none';
+                    attachmentPreview.style.display = 'none';
+                }
+
                 sendBtn.disabled = false;
                 promptEl.focus();
             } catch (e) {

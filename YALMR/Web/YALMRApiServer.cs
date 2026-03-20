@@ -90,7 +90,8 @@ public sealed class YALMRApiServer : IAsyncDisposable
             .Select(id =>
             {
                 int ctx = _server.TryGetModelOptions(id, out var opts) ? opts.ContextTokens : 0;
-                return new ModelInfo(id, "model", Loaded: true, ContextLength: ctx);
+                _server.TryGetModelCapabilities(id, out bool vision, out bool thinking);
+                return new ModelInfo(id, "model", Loaded: true, ContextLength: ctx, Vision: vision, Thinking: thinking);
             })
             .ToList();
 
