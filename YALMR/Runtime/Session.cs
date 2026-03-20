@@ -16,6 +16,7 @@ public sealed record ChatResponseChunk(
     string? Text = null,
     string? ReasoningText = null,
     IReadOnlyList<ToolCall>? ToolCalls = null,
+    IReadOnlyList<ToolCallResult>? ToolResults = null,
     InferenceUsage? Usage = null
 );
 
@@ -417,11 +418,14 @@ public sealed class Session : IAsyncDisposable, IDisposable
                 // Tool execution happens outside the inference loop, so nested
                 // calls (e.g. tools that invoke embeddings or sub-generation)
                 // can proceed without contention.
+                var toolResults = new List<ToolCallResult>(toolCalls!.Count);
                 foreach (var call in toolCalls!)
                 {
                     string result = await ExecuteToolAsync(call, executionContext.RemoteTools, ct);
                     _history.Add(new ChatMessage("tool", result, ToolCallId: call.CallId));
+                    toolResults.Add(new ToolCallResult(call.CallId, call.Name, call.Arguments, result));
                 }
+                yield return new ChatResponseChunk(ToolResults: toolResults);
                 continue;
             }
 

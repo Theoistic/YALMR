@@ -45,6 +45,13 @@ public sealed record ToolCall(
         : this(Name, Arguments, $"call_{Guid.NewGuid():N}") { }
 }
 
+public sealed record ToolCallResult(
+    string CallId,
+    string Name,
+    IReadOnlyDictionary<string, object?> Arguments,
+    string Result
+);
+
 // ── Tool definitions ────────────────────────────────────────────────
 
 public sealed record ToolDefinition(

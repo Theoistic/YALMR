@@ -12,4 +12,9 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Web\Chat\index.html" />
+    <EmbeddedResource Include="Web\Chat\inference.js" />
+  </ItemGroup>
+
 </Project>

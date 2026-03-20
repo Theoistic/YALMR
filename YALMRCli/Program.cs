@@ -3,12 +3,75 @@ using YALMR.Diagnostics;
 using YALMR.LlamaCpp;
 using YALMR.Runtime;
 using YALMR.Utils;
+using YALMR.Web;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 // ── Runtime backend ───────────────────────────────────────────────────────────
 
 string backendDir = await EnsureBackendAsync();
+
+// ── Subcommand dispatch ───────────────────────────────────────────────────────
+
+if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalIgnoreCase))
+{
+    string serveModel = args.Length > 1 && !args[1].StartsWith('-')
+        ? args[1]
+        : @"C:\Users\theo\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf";
+
+    string serveUrl = "http://localhost:5000";
+    for (int i = 1; i < args.Length - 1; i++)
+        if (args[i] == "--url") { serveUrl = args[i + 1]; break; }
+
+    if (!File.Exists(serveModel))
+    {
+        Console.Error.WriteLine($"error: model not found: {serveModel}");
+        Console.Error.WriteLine("usage: YALMRCli serve [path/to/model.gguf] [--url <url>]");
+        return 1;
+    }
+
+    string serveModelId = Path.GetFileNameWithoutExtension(serveModel);
+
+    SessionOptions serveOptions = new()
+    {
+        BackendDirectory = backendDir,
+        ModelPath        = serveModel,
+        ToolRegistry     = [],
+        Compaction       = new ConversationCompactionOptions(
+            MaxInputTokens:        32768,
+            ReservedForGeneration: 8192,
+            Strategy:              ContextCompactionStrategy.PinnedSystemFifo),
+        DefaultInference = new InferenceOptions { EnableThinking = true, MaxOutputTokens = 8192 },
+        GpuLayers        = 99,
+        FlashAttention   = true,
+        KvCacheTypeK     = KvCacheQuantization.Q8_0,
+        KvCacheTypeV     = KvCacheQuantization.Q8_0,
+        ContextTokens    = 32768,
+    };
+
+    Console.Write($"Loading {Path.GetFileName(serveModel)} ...");
+    await using var webServer = new YALMRServer();
+    await webServer.LoadModelAsync(serveModelId, serveOptions);
+    Console.WriteLine(" ready.\n");
+
+    await using var api = new YALMRApiServer(webServer);
+    await api.StartAsync(serveUrl);
+
+    Console.WriteLine($"Listening on  {serveUrl}");
+    Console.WriteLine($"  Chat UI  →  {serveUrl}/chat");
+    Console.WriteLine($"  API      →  {serveUrl}/v1/health");
+    Console.WriteLine("\nPress Ctrl+C to stop.\n");
+
+    var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+    try { await Task.Delay(Timeout.Infinite, cts.Token); }
+    catch (OperationCanceledException) { }
+
+    Console.WriteLine("\nShutting down…");
+    await api.StopAsync();
+    return 0;
+}
 
 // ── Model path ────────────────────────────────────────────────────────────────
 
@@ -268,7 +331,11 @@ static void PrintHistory(Session session)
 
 static void PrintHelp()
 {
-    Console.WriteLine("Commands:");
+    Console.WriteLine("CLI usage:");
+    Console.WriteLine("  YALMRCli [model.gguf]                         interactive REPL");
+    Console.WriteLine("  YALMRCli serve [model.gguf] [--url <url>]     start web API + chat UI");
+    Console.WriteLine();
+    Console.WriteLine("REPL commands:");
     Console.WriteLine("  /help              show this help");
     Console.WriteLine("  /reset             clear conversation history");
     Console.WriteLine("  /system [text]     show or set the system prompt (clears history)");

@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minimal LLM Chat</title>
+    <style>
+        /* Base Reset & Variables */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0f0f0f;
+            --surface: #161616;
+            --border: #272727;
+            --text: #e8e8e8;
+            --muted: #666;
+            --accent: #7c6af7;
+            --user-bg: #1b1830;
+            --user-border: #2e2860;
+            --user-text: #cec6ff;
+            --radius: 12px;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.9rem;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Layout Components */
+        header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            background: var(--bg);
+            z-index: 10;
+        }
+
+            header h1 {
+                font-size: 0.95rem;
+                font-weight: 600;
+                letter-spacing: -0.01em;
+            }
+
+        #model-label {
+            margin-left: auto;
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+            #model-label::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                background: #10b981;
+                border-radius: 50%;
+            }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+            #messages::-webkit-scrollbar {
+                width: 5px;
+            }
+
+            #messages::-webkit-scrollbar-thumb {
+                background: var(--border);
+                border-radius: 10px;
+            }
+
+        /* Message Styling */
+        .message {
+            max-width: 85%;
+            width: fit-content;
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            line-height: 1.6;
+            font-size: 0.92rem;
+            animation: slideUp 0.2s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--user-bg);
+            border: 1px solid var(--user-border);
+            color: var(--user-text);
+            border-bottom-right-radius: 2px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
+        }
+
+        /* Typing Indicator */
+        .typing {
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-left: 2px;
+            margin-top: -8px;
+            margin-bottom: 8px;
+            display: none;
+        }
+
+            .typing.active {
+                display: block;
+            }
+
+        .message.assistant.streaming::after {
+            content: '▍';
+            color: var(--accent);
+            animation: blink 0.9s step-end infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        /* Attachment thumbnail strip */
+        #attachment-preview {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            max-width: 800px;
+            margin: 0 auto 10px;
+        }
+
+        .thumb {
+            position: relative;
+            width: 58px;
+            height: 58px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+
+            .thumb img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+            }
+
+            .thumb::after {
+                content: '×';
+                position: absolute;
+                inset: 0;
+                display: grid;
+                place-items: center;
+                background: rgba(0,0,0,0);
+                color: white;
+                font-size: 1.4rem;
+                font-weight: 300;
+                opacity: 0;
+                transition: background 0.15s, opacity 0.15s;
+            }
+
+            .thumb:hover::after {
+                background: rgba(0,0,0,0.6);
+                opacity: 1;
+            }
+
+        /* Images inside message bubbles */
+        .message img {
+            display: block;
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+
+        /* Attach button */
+        #attach {
+            height: 46px;
+            width: 46px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--surface);
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+        }
+
+            #attach:hover { color: var(--text); border-color: var(--accent); }
+            #attach.has-files { color: var(--accent); border-color: var(--accent); }
+
+            #attach svg {
+                width: 20px;
+                height: 20px;
+                stroke: currentColor;
+                fill: none;
+                stroke-width: 2;
+            }
+
+        /* Input Section */
+        #input-container {
+            border-top: 1px solid var(--border);
+            padding: 16px 24px 24px;
+            background: var(--bg);
+            flex-shrink: 0;
+        }
+
+        .input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            position: relative;
+        }
+
+        #prompt {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font: inherit;
+            padding: 12px 14px;
+            resize: none;
+            outline: none;
+            min-height: 46px;
+            max-height: 180px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+            #prompt:focus {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 2px rgba(124, 106, 247, 0.1);
+            }
+
+            #prompt::placeholder {
+                color: var(--muted);
+            }
+
+        #send {
+            height: 46px;
+            width: 46px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            flex-shrink: 0;
+        }
+
+            #send:hover:not(:disabled) {
+                opacity: 0.9;
+                transform: scale(1.02);
+            }
+
+            #send:active:not(:disabled) {
+                transform: scale(0.96);
+            }
+
+            #send:disabled {
+                opacity: 0.3;
+                cursor: not-allowed;
+            }
+
+            #send svg {
+                width: 20px;
+                height: 20px;
+                stroke: currentColor;
+                fill: none;
+                stroke-width: 2.5;
+            }
+
+        .footer-note {
+            text-align: center;
+            font-size: 0.7rem;
+            color: var(--muted);
+            margin-top: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Thinking accordion */
+
+        .msg-text {
+            display: block;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .msg-text:empty { display: none; }
+
+        details ~ .msg-text:not(:empty) { margin-top: 8px; }
+
+        .thinking-block {
+            border: 1px solid #2a2640;
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 0.82rem;
+        }
+
+        .thinking-block > summary {
+            cursor: pointer;
+            padding: 5px 10px;
+            background: #1e1a36;
+            color: #9b8ef0;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .thinking-block > summary::marker,
+        .thinking-block > summary::-webkit-details-marker { display: none; }
+
+        .thinking-block > summary::before {
+            content: '▶';
+            font-size: 0.6rem;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        .thinking-block[open] > summary::before { transform: rotate(90deg); }
+
+        .thinking-text {
+            padding: 8px 10px;
+            color: #7a7a9a;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #13111f;
+        }
+
+        /* Tool call / result blocks */
+        .tool-block {
+            border: 1px solid #1e3028;
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 0.82rem;
+        }
+
+        .tool-block > summary {
+            cursor: pointer;
+            padding: 5px 10px;
+            background: #131f19;
+            color: #4ade80;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tool-block > summary::marker,
+        .tool-block > summary::-webkit-details-marker { display: none; }
+
+        .tool-block > summary::before {
+            content: '▶';
+            font-size: 0.6rem;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        .tool-block[open] > summary::before { transform: rotate(90deg); }
+
+        .tool-args {
+            padding: 8px 10px;
+            color: #a3d9b8;
+            background: #0e1a13;
+            border-bottom: 1px solid #1e3028;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .tool-result {
+            padding: 8px 10px;
+            color: #74d09a;
+            background: #0a1510;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Minimal LLM</h1>
+        <span id="model-label">connecting…</span>
+    </header>
+
+    <div id="messages"></div>
+
+    <input type="file" id="file-input" accept="image/*" multiple hidden />
+
+    <div id="input-container">
+        <div id="typing-indicator" class="typing">AI is thinking...</div>
+        <div id="attachment-preview"></div>
+        <div class="input-wrapper">
+            <button id="attach" title="Attach images">
+                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </button>
+            <textarea id="prompt"
+                      rows="1"
+                      placeholder="Type a message..."
+                      spellcheck="false"></textarea>
+            <button id="send" title="Send message">
+                <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+        </div>
+        <div class="footer-note">Shift + Enter for newline &bull; Enter to send</div>
+    </div>
+
+    <script src="/chat/inference.js"></script>
+    <script>
+        const client             = new YALMRClient();
+        const messagesEl         = document.getElementById('messages');
+        const promptEl           = document.getElementById('prompt');
+        const sendBtn            = document.getElementById('send');
+        const attachBtn          = document.getElementById('attach');
+        const fileInput          = document.getElementById('file-input');
+        const attachmentPreview  = document.getElementById('attachment-preview');
+        const typingEl           = document.getElementById('typing-indicator');
+        const modelLabel         = document.getElementById('model-label');
+
+        let pendingImages = [];
+
+        // Add message to the chat UI
+        function addMessage(role, text = '', images = []) {
+            const el = document.createElement('div');
+            el.className = `message ${role}`;
+            for (const src of images) {
+                const img = document.createElement('img');
+                img.src = src;
+                el.appendChild(img);
+            }
+            const span = document.createElement('span');
+            span.className = 'msg-text';
+            span.textContent = text;
+            el.appendChild(span);
+            messagesEl.appendChild(el);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return el;
+        }
+
+        function textOf(el) { return el.querySelector('.msg-text'); }
+
+        // ── Init ─────────────────────────────────────────────────────────────
+
+        async function init() {
+            sendBtn.disabled = true;
+            try {
+                const models = await client.models();
+                if (!models.length) { modelLabel.textContent = 'no models loaded'; return; }
+                const model = models[0];
+                await client.createSession(model.id);
+                modelLabel.textContent = model.id;
+                sendBtn.disabled = false;
+                promptEl.focus();
+            } catch (e) {
+                modelLabel.textContent = 'connection error';
+            }
+        }
+
+        // ── Send ──────────────────────────────────────────────────────────────
+
+        async function handleSend() {
+            const text = promptEl.value.trim();
+            if ((!text && !pendingImages.length) || sendBtn.disabled) return;
+
+            const images = [...pendingImages];
+            pendingImages = [];
+            renderAttachments();
+
+            promptEl.value = '';
+            promptEl.style.height = 'auto';
+            sendBtn.disabled = true;
+
+            addMessage('user', text, images);
+
+            typingEl.classList.add('active');
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+            const assistantEl = addMessage('assistant');
+            assistantEl.classList.add('streaming');
+
+            // Thinking accordion — created lazily on first thinking delta
+            let thinkingDetails = null;
+            let thinkingText = null;
+
+            // Tool blocks keyed by call_id
+            const toolBlocks = {};
+
+            function ensureThinking() {
+                if (thinkingDetails) return;
+                thinkingDetails = document.createElement('details');
+                thinkingDetails.className = 'thinking-block';
+                const summary = document.createElement('summary');
+                summary.textContent = 'Thinking…';
+                thinkingText = document.createElement('div');
+                thinkingText.className = 'thinking-text';
+                thinkingDetails.appendChild(summary);
+                thinkingDetails.appendChild(thinkingText);
+                assistantEl.insertBefore(thinkingDetails, textOf(assistantEl));
+            }
+
+            try {
+                await client.send(text, {
+                    stream: true,
+                    images,
+                    onThinking: (delta) => {
+                        typingEl.classList.remove('active');
+                        ensureThinking();
+                        thinkingText.textContent += delta;
+                        messagesEl.scrollTop = messagesEl.scrollHeight;
+                    },
+                    onToolCall: (data) => {
+                        typingEl.classList.remove('active');
+                        const details = document.createElement('details');
+                        details.className = 'tool-block';
+                        const summary = document.createElement('summary');
+                        summary.textContent = `⚙ ${data.name}`;
+                        const argsEl = document.createElement('div');
+                        argsEl.className = 'tool-args';
+                        try { argsEl.textContent = JSON.stringify(data.arguments, null, 2); }
+                        catch { argsEl.textContent = String(data.arguments); }
+                        details.appendChild(summary);
+                        details.appendChild(argsEl);
+                        assistantEl.insertBefore(details, textOf(assistantEl));
+                        toolBlocks[data.call_id] = details;
+                        messagesEl.scrollTop = messagesEl.scrollHeight;
+                    },
+                    onToolResult: (data) => {
+                        const details = toolBlocks[data.call_id];
+                        if (details) {
+                            const resultEl = document.createElement('div');
+                            resultEl.className = 'tool-result';
+                            resultEl.textContent = data.result;
+                            details.appendChild(resultEl);
+                            details.open = true;
+                        }
+                        messagesEl.scrollTop = messagesEl.scrollHeight;
+                    },
+                    onToken: (_delta, full) => {
+                        typingEl.classList.remove('active');
+                        textOf(assistantEl).textContent = full.trimStart();
+                        messagesEl.scrollTop = messagesEl.scrollHeight;
+                    }
+                });
+            } catch (e) {
+                textOf(assistantEl).textContent = `Error: ${e.message}`;
+            }
+
+            typingEl.classList.remove('active');
+            assistantEl.classList.remove('streaming');
+            sendBtn.disabled = false;
+            promptEl.focus();
+        }
+
+        // --- Event Listeners ---
+
+        sendBtn.addEventListener('click', handleSend);
+
+        promptEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+        // Auto-growing textarea
+        promptEl.addEventListener('input', () => {
+            promptEl.style.height = 'auto';
+            const newHeight = Math.min(promptEl.scrollHeight, 180);
+            promptEl.style.height = `${newHeight}px`;
+        });
+
+        // ── Attachments ───────────────────────────────────────────────────────
+
+        function renderAttachments() {
+            attachmentPreview.innerHTML = '';
+            attachBtn.classList.toggle('has-files', pendingImages.length > 0);
+            pendingImages.forEach((src, i) => {
+                const thumb = document.createElement('div');
+                thumb.className = 'thumb';
+                const img = document.createElement('img');
+                img.src = src;
+                thumb.appendChild(img);
+                thumb.addEventListener('click', () => { pendingImages.splice(i, 1); renderAttachments(); });
+                attachmentPreview.appendChild(thumb);
+            });
+        }
+
+        attachBtn.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', async () => {
+            const files = [...fileInput.files];
+            fileInput.value = '';
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) continue;
+                const dataUrl = await new Promise(res => {
+                    const reader = new FileReader();
+                    reader.onload = e => res(e.target.result);
+                    reader.readAsDataURL(file);
+                });
+                pendingImages.push(dataUrl);
+            }
+            renderAttachments();
+        });
+
+        init();
+    </script>
+</body>
+</html>

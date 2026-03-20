@@ -63,6 +63,8 @@ public sealed class YALMRApiServer : IAsyncDisposable
     /// </summary>
     public void MapEndpoints(IEndpointRouteBuilder routes)
     {
+        routes.MapGet("/chat", () => ServeEmbeddedResource("YALMR.Web.Chat.index.html", "text/html; charset=utf-8"));
+        routes.MapGet("/chat/inference.js", () => ServeEmbeddedResource("YALMR.Web.Chat.inference.js", "application/javascript; charset=utf-8"));
         routes.MapGet("/v1/health", HandleHealth);
         routes.MapGet("/v1/models", HandleModels);
         routes.MapPost("/v1/generate", HandleGenerateAsync);
@@ -242,6 +244,12 @@ public sealed class YALMRApiServer : IAsyncDisposable
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
+    private static IResult ServeEmbeddedResource(string resourceName, string contentType)
+    {
+        var stream = typeof(YALMRApiServer).Assembly.GetManifestResourceStream(resourceName);
+        return stream is null ? Results.NotFound() : Results.Stream(stream, contentType);
+    }
+
     private async Task<IResult> RunStatelessAsync(
         string modelId,
         IReadOnlyList<ChatMessage> input,
@@ -285,10 +293,34 @@ public sealed class YALMRApiServer : IAsyncDisposable
 
         await foreach (var chunk in stream.WithCancellation(ct))
         {
+            if (chunk.ReasoningText is { Length: > 0 } rDelta)
+            {
+                await response.WriteAsync($"event: thinking\ndata: {Json(new SseThinkingEvent(rDelta))}\n\n", ct);
+                await response.BodyWriter.FlushAsync(ct);
+            }
+
             if (chunk.Text is { Length: > 0 } delta)
             {
                 await response.WriteAsync($"event: token\ndata: {Json(new SseTokenEvent(delta))}\n\n", ct);
                 await response.BodyWriter.FlushAsync(ct);
+            }
+
+            if (chunk.ToolCalls is { Count: > 0 } toolCalls)
+            {
+                foreach (var call in toolCalls)
+                {
+                    await response.WriteAsync($"event: tool_call\ndata: {Json(new SseToolCallEvent(call.CallId, call.Name, call.Arguments))}\n\n", ct);
+                    await response.BodyWriter.FlushAsync(ct);
+                }
+            }
+
+            if (chunk.ToolResults is { Count: > 0 } toolResults)
+            {
+                foreach (var res in toolResults)
+                {
+                    await response.WriteAsync($"event: tool_result\ndata: {Json(new SseToolResultEvent(res.CallId, res.Name, res.Result))}\n\n", ct);
+                    await response.BodyWriter.FlushAsync(ct);
+                }
             }
 
             if (chunk.Usage is not null)
@@ -353,6 +385,19 @@ public sealed class YALMRApiServer : IAsyncDisposable
 
     private sealed record SseTokenEvent(
         [property: JsonPropertyName("delta")] string Delta);
+
+    private sealed record SseThinkingEvent(
+        [property: JsonPropertyName("delta")] string Delta);
+
+    private sealed record SseToolCallEvent(
+        [property: JsonPropertyName("call_id")] string CallId,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("arguments")] object Arguments);
+
+    private sealed record SseToolResultEvent(
+        [property: JsonPropertyName("call_id")] string CallId,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("result")] string Result);
 
     private sealed record SseEndEvent(
         [property: JsonPropertyName("finish_reason")] string FinishReason,
