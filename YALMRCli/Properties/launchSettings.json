@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "YALMRCli": {
+      "commandName": "Project",
+      "commandLineArgs": "serve"
+    }
+  }
+}

@@ -1,20 +1,24 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>Library</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
-  </PropertyGroup>
+	<PropertyGroup>
+		<OutputType>Library</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="Web\Chat\index.html" />
-    <EmbeddedResource Include="Web\Chat\inference.js" />
-  </ItemGroup>
+	<ItemGroup>
+		<EmbeddedResource Include="Web\Chat\index.html" />
+		<EmbeddedResource Include="Web\Chat\inference.js" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="..\README.md" Link="README.md" />
+	</ItemGroup>
 
 </Project>

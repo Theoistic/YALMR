@@ -253,7 +253,7 @@ public sealed class YALMRApiServer : IAsyncDisposable
 
     private static IResult ServeEmbeddedResource(string resourceName, string contentType)
     {
-        var stream = typeof(YALMRApiServer).Assembly.GetManifestResourceStream(resourceName);
+        var stream = typeof(YALMRServer).Assembly.GetManifestResourceStream(resourceName);
         return stream is null ? Results.NotFound() : Results.Stream(stream, contentType);
     }
 
