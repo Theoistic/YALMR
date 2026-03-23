@@ -81,7 +81,7 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
         using var activity = RuntimeTelemetry.StartActivity("yalmr.context.generate_tokens");
         activity?.SetTag("yalmr.max_output_tokens", maxOutputTokens);
 
-        var samplerChain = Llama.CreateSamplerChain(options, _random);
+        var samplerChain = Llama.CreateSamplerChain(options, _random, _engine.NativeModel);
         int emittedTokens = 0;
         _utf8Decoder.Reset();
         try

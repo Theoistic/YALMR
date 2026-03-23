@@ -81,6 +81,12 @@ public sealed record InferenceOptions
     public int? MaxOutputTokens { get; init; } = 512;
     public int? Seed { get; init; }
     public bool AddVisionId { get; init; } = false;
+
+    /// <summary>
+    /// GBNF grammar string that constrains token sampling to valid structured output.
+    /// Set via <see cref="GbnfSchemaGenerator.FromType"/> or provide a raw GBNF string.
+    /// </summary>
+    public string? Grammar { get; init; }
 }
 
 // ── Request / Response ──────────────────────────────────────────────

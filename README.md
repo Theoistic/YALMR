@@ -54,10 +54,29 @@ Multi-turn conversation is tracked automatically. Each call to `GenerateAsync` a
 
 ---
 
+## Structured output
+
+Use `AskAsync<T>()` to get a typed response. The model's sampling is constrained via GBNF grammar so the output is always valid JSON matching your type's schema — no prompt-engineering or retry logic required.
+
+```csharp
+public record MovieReview(string Title, int ReleaseYear, double Score, string Summary);
+
+var review = await session.AskAsync<MovieReview>(
+    "Review the movie Interstellar.");
+
+Console.WriteLine($"{review.Title} ({review.ReleaseYear}) — {review.Score}/10");
+Console.WriteLine(review.Summary);
+```
+
+Any JSON-serializable type works: records, classes, and collections. Optional properties (nullable or with defaults) may be returned as `null` by the model.
+
+---
+
 ## Features
 
 - **Tool calling** — register handlers in `ToolRegistry`; the model calls them automatically
 - **Streaming** — `IAsyncEnumerable<ChatResponseChunk>` with text, reasoning, and tool-call chunks
+- **Structured output** — `AskAsync<T>()` constrains sampling via GBNF grammar and deserializes the result
 - **Vision** — attach images via `ImagePart` with a multimodal projector model
 - **Conversation compaction** — automatic context-window management with pluggable strategies
 - **MCP integration** — call tools from HTTP or stdio MCP servers

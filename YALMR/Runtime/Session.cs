@@ -165,6 +165,22 @@ public sealed class Session : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
+    /// Sends a single message with a per-call inference override and returns the final assistant message.
+    /// </summary>
+    public async Task<ChatMessage> SendAsync(ChatMessage message, InferenceOptions inferenceOverride, CancellationToken ct = default)
+    {
+        await foreach (var _ in GenerateAsync(message, inferenceOverride, ct).ConfigureAwait(false))
+        {
+        }
+
+        for (int i = _history.Count - 1; i >= 0; i--)
+            if (_history[i].Role == "assistant")
+                return _history[i];
+
+        throw new InvalidOperationException("No assistant message was generated.");
+    }
+
+    /// <summary>
     /// Handles a response-style request and returns a response-style object.
     /// </summary>
     public async Task<ResponseObject> CreateResponseAsync(ResponseRequest request, CancellationToken ct = default)

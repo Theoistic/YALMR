@@ -342,6 +342,9 @@ public static class Llama
     private static extern IntPtr llama_sampler_init_penalties(
         int penalty_last_n, float penalty_repeat, float penalty_freq, float penalty_present);
 
+    [DllImport(LLAMA_LIB, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr llama_sampler_init_grammar(IntPtr vocab, IntPtr grammar_str, IntPtr grammar_root);
+
     private static IntPtr AllocUtf8(string s)
     {
         byte[] utf8 = Encoding.UTF8.GetBytes(s + "\0");
@@ -863,10 +866,26 @@ public static class Llama
     /// The chain holds no managed references and must be freed with
     /// <see cref="FreeSamplerChain"/> when generation is complete.
     /// </summary>
-    public static SamplerChain CreateSamplerChain(InferenceOptions options, Random random)
+    public static SamplerChain CreateSamplerChain(InferenceOptions options, Random random, Model? model = null)
     {
         float temperature = options.Temperature.GetValueOrDefault();
         IntPtr chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
+
+        if (!string.IsNullOrWhiteSpace(options.Grammar) && model.HasValue)
+        {
+            IntPtr grammarPtr = AllocUtf8(options.Grammar);
+            IntPtr rootPtr    = AllocUtf8("root");
+            Vocab  vocab      = GetVocab(model.Value);
+            try
+            {
+                llama_sampler_chain_add(chain, llama_sampler_init_grammar(vocab.Ptr, grammarPtr, rootPtr));
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(grammarPtr);
+                Marshal.FreeHGlobal(rootPtr);
+            }
+        }
 
         if (temperature <= 0)
         {
