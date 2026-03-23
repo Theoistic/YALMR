@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace YALMR.Runtime;
 
@@ -14,8 +15,9 @@ public static class GbnfSchemaGenerator
 {
     private static readonly JsonSerializerOptions s_schemaOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNamingPolicy   = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        TypeInfoResolver       = new DefaultJsonTypeInfoResolver(),
     };
 
     // Common terminal rules appended to every grammar.
@@ -31,15 +33,32 @@ public static class GbnfSchemaGenerator
     /// <summary>
     /// Generates a GBNF grammar for <typeparamref name="T"/>.
     /// </summary>
-    public static string FromType<T>() => FromType(typeof(T));
+    /// <param name="options">
+    /// Optional serializer options. When supplied the same naming policy is used for
+    /// both the GBNF property keys and the final JSON deserialization.
+    /// </param>
+    public static string FromType<T>(JsonSerializerOptions? options = null) => FromType(typeof(T), options);
 
     /// <summary>
     /// Generates a GBNF grammar for the given <paramref name="type"/>.
     /// </summary>
-    public static string FromType(Type type)
+    /// <param name="options">
+    /// Optional serializer options. When supplied the same naming policy is used for
+    /// both the GBNF property keys and the final JSON deserialization.
+    /// </param>
+    public static string FromType(Type type, JsonSerializerOptions? options = null)
     {
-        var schema = JsonSchemaExporter.GetJsonSchemaAsNode(s_schemaOptions, type);
+        var schema = JsonSchemaExporter.GetJsonSchemaAsNode(EnsureSchemaOptions(options), type);
         return FromJsonSchemaNode(schema);
+    }
+
+    // Returns options that are safe to pass to JsonSchemaExporter (TypeInfoResolver required).
+    private static JsonSerializerOptions EnsureSchemaOptions(JsonSerializerOptions? options)
+    {
+        if (options is null) return s_schemaOptions;
+        // Already read-only → TypeInfoResolver was set when it was first used.
+        if (options.IsReadOnly || options.TypeInfoResolver is not null) return options;
+        return new JsonSerializerOptions(options) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
     }
 
     /// <summary>
@@ -247,6 +266,8 @@ public static class StructuredOutputExtensions
     {
         PropertyNamingPolicy        = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
+        TypeInfoResolver            = new DefaultJsonTypeInfoResolver(),
+        ReferenceHandler            = ReferenceHandler.IgnoreCycles,
     };
 
     /// <summary>
@@ -257,15 +278,15 @@ public static class StructuredOutputExtensions
     public static async Task<T> AskAsync<T>(
         this Session session,
         string prompt,
+        JsonSerializerOptions? options = null,
         CancellationToken ct = default)
     {
-        string grammar  = GbnfSchemaGenerator.FromType<T>();
+        string grammar   = GbnfSchemaGenerator.FromType<T>(options);
         var    override_ = session.DefaultInference with { Grammar = grammar };
         var    reply     = await session.SendAsync(new ChatMessage("user", prompt), override_, ct);
+        string json      = ExtractJson(reply.Content ?? string.Empty);
 
-        string json = ExtractJson(reply.Content ?? string.Empty);
-
-        return JsonSerializer.Deserialize<T>(json, s_deserializeOptions)
+        return JsonSerializer.Deserialize<T>(json, options ?? s_deserializeOptions)
                ?? throw new InvalidOperationException("Model returned null for structured output.");
     }
 
@@ -277,15 +298,15 @@ public static class StructuredOutputExtensions
     public static async Task<T> AskAsync<T>(
         this Session session,
         ChatMessage message,
+        JsonSerializerOptions? options = null,
         CancellationToken ct = default)
     {
-        string grammar   = GbnfSchemaGenerator.FromType<T>();
+        string grammar   = GbnfSchemaGenerator.FromType<T>(options);
         var    override_ = session.DefaultInference with { Grammar = grammar };
         var    reply     = await session.SendAsync(message, override_, ct);
+        string json      = ExtractJson(reply.Content ?? string.Empty);
 
-        string json = ExtractJson(reply.Content ?? string.Empty);
-
-        return JsonSerializer.Deserialize<T>(json, s_deserializeOptions)
+        return JsonSerializer.Deserialize<T>(json, options ?? s_deserializeOptions)
                ?? throw new InvalidOperationException("Model returned null for structured output.");
     }
 
