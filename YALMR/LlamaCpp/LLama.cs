@@ -856,7 +856,10 @@ public static class Llama
     /// <summary>
     /// Handle to a native llama_sampler_chain.
     /// </summary>
-    public readonly record struct SamplerChain(IntPtr Ptr)
+    public readonly record struct SamplerChain(
+        IntPtr Ptr,
+        IntPtr GrammarPtr,
+        IntPtr RootPtr)
     {
         public bool IsNull => Ptr == IntPtr.Zero;
     }
@@ -870,27 +873,22 @@ public static class Llama
     {
         float temperature = options.Temperature.GetValueOrDefault();
         IntPtr chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
+        IntPtr grammarPtr = IntPtr.Zero;
+        IntPtr rootPtr = IntPtr.Zero;
 
         if (!string.IsNullOrWhiteSpace(options.Grammar) && model.HasValue)
         {
-            IntPtr grammarPtr = AllocUtf8(options.Grammar);
-            IntPtr rootPtr    = AllocUtf8("root");
-            Vocab  vocab      = GetVocab(model.Value);
-            try
-            {
-                llama_sampler_chain_add(chain, llama_sampler_init_grammar(vocab.Ptr, grammarPtr, rootPtr));
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(grammarPtr);
-                Marshal.FreeHGlobal(rootPtr);
-            }
+            grammarPtr = AllocUtf8(options.Grammar);
+            rootPtr    = AllocUtf8("root");
+            Vocab  vocab = GetVocab(model.Value);
+
+            llama_sampler_chain_add(chain, llama_sampler_init_grammar(vocab.Ptr, grammarPtr, rootPtr));
         }
 
         if (temperature <= 0)
         {
             llama_sampler_chain_add(chain, llama_sampler_init_greedy());
-            return new SamplerChain(chain);
+            return new SamplerChain(chain, grammarPtr, rootPtr);
         }
 
         float presencePenalty  = options.PresencePenalty.GetValueOrDefault();
@@ -908,17 +906,21 @@ public static class Llama
         uint seed = options.Seed.HasValue ? (uint)options.Seed.Value : (uint)random.Next();
         llama_sampler_chain_add(chain, llama_sampler_init_dist(seed));
 
-        return new SamplerChain(chain);
+        return new SamplerChain(chain, grammarPtr, rootPtr);
     }
 
     /// <summary>
-    /// Samples the next token using a native sampler chain and accepts it,
-    /// updating the chain's internal penalty window.
+    /// Samples the next token using a native sampler chain.
+    /// In llama.cpp b8479+, <c>llama_sampler_sample</c> already calls
+    /// <c>llama_sampler_accept</c> internally, so no separate accept call is needed.
     /// </summary>
     public static int SampleWithChain(SamplerChain chain, Context ctx)
     {
         int token = llama_sampler_sample(chain.Ptr, ctx.Ptr, -1);
-        llama_sampler_accept(chain.Ptr, token);
+
+        if (token < 0)
+            throw new InvalidOperationException($"llama_sampler_sample returned invalid token id {token}.");
+
         return token;
     }
 
@@ -929,6 +931,12 @@ public static class Llama
     {
         if (!chain.IsNull)
             llama_sampler_free(chain.Ptr);
+
+        if (chain.GrammarPtr != IntPtr.Zero)
+            Marshal.FreeHGlobal(chain.GrammarPtr);
+
+        if (chain.RootPtr != IntPtr.Zero)
+            Marshal.FreeHGlobal(chain.RootPtr);
     }
 
     /// <summary>

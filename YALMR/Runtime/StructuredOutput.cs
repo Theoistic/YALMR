@@ -137,7 +137,7 @@ public static class GbnfSchemaGenerator
                     if (v is not JsonValue jv || !jv.TryGetValue<string>(out var typeName)) return "string";
                     return typeName == "null"
                         ? "null"
-                        : BuildRule(new JsonObject { ["type"] = JsonValue.Create(typeName) }, $"{name}-v{i}", rules, defs);
+                        : BuildRule(CloneSchemaWithType(obj, typeName), $"{name}-v{i}", rules, defs);
                 })
                 .Distinct()
                 .ToList();
@@ -286,6 +286,13 @@ public static class GbnfSchemaGenerator
     /// </summary>
     private static string GbnfJsonKey(string propertyName) =>
         GbnfLiteral('"' + propertyName + '"');
+
+    private static JsonObject CloneSchemaWithType(JsonObject schema, string typeName)
+    {
+        var clone = (JsonObject)schema.DeepClone();
+        clone["type"] = JsonValue.Create(typeName);
+        return clone;
+    }
 
     private static string ToRuleName(string propName)
     {
