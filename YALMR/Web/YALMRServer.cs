@@ -51,13 +51,17 @@ public sealed class YALMRServer : IAsyncDisposable, IDisposable
             var engine = await Engine.CreateAsync(options, ct);
 
             // Reconcile EnableThinking with what the model's chat template actually supports.
-            // This overrides any manually set value so the server always behaves correctly
-            // without needing a CLI flag.
+            // If the caller explicitly disabled thinking (false), that choice is honoured.
+            // Otherwise we fall back to the engine's own detection so a reasoning model
+            // always enables thinking by default when no opinion was expressed.
+            var userDefaultInference = options.DefaultInference ?? new InferenceOptions();
             var effectiveOptions = options with
             {
-                DefaultInference = (options.DefaultInference ?? new InferenceOptions()) with
+                DefaultInference = userDefaultInference with
                 {
-                    EnableThinking = engine.ThinkingEnabled
+                    EnableThinking = userDefaultInference.EnableThinking == false
+                        ? false
+                        : engine.ThinkingEnabled
                 }
             };
 
