@@ -1,6 +1,8 @@
 # YALMR
 
-**Y**et **A**nother L**LM** **R**untime — run local GGUF models in .NET 10 via llama.cpp.
+[![NuGet](https://img.shields.io/nuget/v/YALMR.svg)](https://www.nuget.org/packages/YALMR)
+
+**Y**et **A**nother L**LM** **R**untime ï¿½ run local GGUF models in .NET 10 via llama.cpp.
 
 > Requires .NET 10 SDK and a GGUF model file (e.g. from [Hugging Face](https://huggingface.co/models?library=gguf)).
 
@@ -54,9 +56,9 @@ Multi-turn conversation is tracked automatically. Each call to `GenerateAsync` a
 
 ## Features
 
-- **Tool calling** — register handlers in `ToolRegistry`; the model calls them automatically
-- **Streaming** — `IAsyncEnumerable<GenerationChunk>` with text, reasoning, and tool-call chunks
-- **Vision** — attach images via `ImagePart` with a multimodal projector model
-- **Conversation compaction** — automatic context-window management with pluggable strategies
-- **MCP integration** — call tools from HTTP or stdio MCP servers
-- **Multi-model server** — `YALMRServer` manages named engines and sessions for concurrent use
+- **Tool calling** ï¿½ register handlers in `ToolRegistry`; the model calls them automatically
+- **Streaming** ï¿½ `IAsyncEnumerable<GenerationChunk>` with text, reasoning, and tool-call chunks
+- **Vision** ï¿½ attach images via `ImagePart` with a multimodal projector model
+- **Conversation compaction** ï¿½ automatic context-window management with pluggable strategies
+- **MCP integration** ï¿½ call tools from HTTP or stdio MCP servers
+- **Multi-model server** ï¿½ `YALMRServer` manages named engines and sessions for concurrent use
