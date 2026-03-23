@@ -91,6 +91,27 @@ public sealed class AgentTool
         Task.Run(() => Execute(args), ct);
 
     /// <summary>
+    /// Converts this tool to a <see cref="ToolDefinition"/> for use in <see cref="InferenceOptions.Tools"/>.
+    /// </summary>
+    public ToolDefinition ToToolDefinition()
+    {
+        var props = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var p in Parameters)
+            props[p.Name] = new { type = p.Type, description = p.Description };
+
+        string[] required = Parameters
+            .Where(p => p.Required)
+            .Select(p => p.Name)
+            .ToArray();
+
+        return new ToolDefinition(
+            Type:        "function",
+            Name:        Name,
+            Description: Description,
+            Parameters:  new { type = "object", properties = props, required });
+    }
+
+    /// <summary>
     /// Converts the tool definition into the template schema shape expected by the model.
     /// </summary>
     public object ToTemplateTool()
@@ -154,6 +175,12 @@ public sealed class ToolRegistry : IEnumerable<AgentTool>
     /// </summary>
     public bool TryGet(string name, [NotNullWhen(true)] out AgentTool? tool) =>
         _tools.TryGetValue(name, out tool);
+
+    /// <summary>
+    /// Converts all registered tools into <see cref="ToolDefinition"/> instances for <see cref="InferenceOptions.Tools"/>.
+    /// </summary>
+    public ToolDefinition[] ToToolDefinitions() =>
+        [.. _tools.Values.Select(t => t.ToToolDefinition())];
 
     /// <summary>
     /// Converts all registered tools into template tool definitions.
