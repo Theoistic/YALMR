@@ -6,6 +6,20 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+
+		<!-- NuGet package metadata -->
+		<PackageId>YALMR</PackageId>
+		<Title>YALMR — Yet Another LLM Runtime</Title>
+		<Description>Run local GGUF models in .NET 10 via llama.cpp. Features streaming generation, tool calling, vision (multimodal), conversation compaction, MCP integration, and a multi-model server.</Description>
+		<Authors>Theoistic</Authors>
+		<PackageTags>llm;llama.cpp;gguf;ai;local-llm;dotnet;mcp;tool-calling;streaming;vision;machine-learning</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageProjectUrl>https://github.com/Theoistic/YALMR</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/Theoistic/YALMR</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageIcon>icon.png</PackageIcon>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -18,7 +32,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="..\README.md" Link="README.md" />
+		<None Include="..\README.md" Pack="true" PackagePath="\" />
+		<None Include="..\icon.png" Pack="true" PackagePath="\" Condition="Exists('..\icon.png')" />
 	</ItemGroup>
 
 </Project>

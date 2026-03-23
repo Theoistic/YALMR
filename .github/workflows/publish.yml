@@ -1,0 +1,69 @@
+name: Build and Publish NuGet Package
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Extract version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Using version $VERSION"
+
+      - name: Restore
+        run: dotnet restore YALMR.slnx
+
+      - name: Build
+        run: dotnet build YALMR.slnx --configuration Release --no-restore
+
+      - name: Pack NuGet
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          dotnet pack YALMR/YALMR.csproj \
+            --configuration Release \
+            --no-build \
+            -p:PackageVersion=${{ env.VERSION }} \
+            -p:IncludeSymbols=true \
+            -p:SymbolPackageFormat=snupkg \
+            --output ./nupkg
+
+      - name: Publish to NuGet
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          dotnet nuget push ./nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+          dotnet nuget push ./nupkg/*.snupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./nupkg/*
