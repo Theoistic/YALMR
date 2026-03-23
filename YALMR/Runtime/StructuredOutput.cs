@@ -67,7 +67,8 @@ public static class GbnfSchemaGenerator
     public static string FromJsonSchemaNode(JsonNode schema)
     {
         var rules = new Dictionary<string, string>(StringComparer.Ordinal);
-        string root = BuildRule(schema, "root", rules);
+        var defs  = (schema as JsonObject)?["$defs"] as JsonObject;
+        string root = BuildRule(schema, "root", rules, defs);
         if (!rules.ContainsKey("root"))
             rules["root"] = root;
 
@@ -85,17 +86,35 @@ public static class GbnfSchemaGenerator
 
     // -------------------------------------------------------------------------
 
-    private static string BuildRule(JsonNode schema, string name, Dictionary<string, string> rules)
+    private static string BuildRule(JsonNode schema, string name, Dictionary<string, string> rules, JsonObject? defs = null)
     {
         if (schema is not JsonObject obj)
             return "string"; // fallback
+
+        // $ref → resolve from $defs
+        if (obj["$ref"] is JsonValue refVal && refVal.TryGetValue<string>(out var refPath) &&
+            refPath.StartsWith("#/$defs/", StringComparison.Ordinal))
+        {
+            string defKey   = refPath["#/$defs/".Length..];
+            string ruleName = ToRuleName(defKey);
+            if (!rules.ContainsKey(ruleName))
+            {
+                if (defs?[defKey] is JsonNode defSchema)
+                {
+                    rules[ruleName] = string.Empty; // reserve slot to guard against self-referential types
+                    rules[ruleName] = BuildRule(defSchema, ruleName, rules, defs);
+                }
+                else return "string";
+            }
+            return ruleName;
+        }
 
         // anyOf → nullable or union
         if (obj["anyOf"] is JsonArray anyOf)
         {
             var variants = anyOf
                 .OfType<JsonObject>()
-                .Select((v, i) => BuildRule(v, $"{name}-v{i}", rules))
+                .Select((v, i) => BuildRule(v, $"{name}-v{i}", rules, defs))
                 .Distinct()
                 .ToList();
 
@@ -109,7 +128,29 @@ public static class GbnfSchemaGenerator
             return $"({string.Join(" | ", variants)})";
         }
 
-        string? type = obj["type"]?.GetValue<string>();
+        // "type" can be a string or an array (e.g. ["string", "null"])
+        if (obj["type"] is JsonArray typeArr)
+        {
+            var variants = typeArr
+                .Select((v, i) =>
+                {
+                    if (v is not JsonValue jv || !jv.TryGetValue<string>(out var typeName)) return "string";
+                    return typeName == "null"
+                        ? "null"
+                        : BuildRule(new JsonObject { ["type"] = JsonValue.Create(typeName) }, $"{name}-v{i}", rules, defs);
+                })
+                .Distinct()
+                .ToList();
+
+            if (variants.Count == 2 && variants.Contains("null"))
+            {
+                string nonNull = variants.First(v => v != "null");
+                return $"({nonNull} | null)";
+            }
+            return $"({string.Join(" | ", variants)})";
+        }
+
+        string? type = obj["type"] is JsonValue typeVal && typeVal.TryGetValue<string>(out var ts) ? ts : null;
 
         return type switch
         {
@@ -118,8 +159,8 @@ public static class GbnfSchemaGenerator
             "number"  => "number",
             "boolean" => "boolean",
             "null"    => "null",
-            "array"   => BuildArrayRule(obj, name, rules),
-            "object"  => BuildObjectRule(obj, name, rules),
+            "array"   => BuildArrayRule(obj, name, rules, defs),
+            "object"  => BuildObjectRule(obj, name, rules, defs),
             _         => "string",
         };
     }
@@ -130,20 +171,22 @@ public static class GbnfSchemaGenerator
         if (obj["enum"] is JsonArray enums)
         {
             var vals = enums
-                .Select(e => GbnfLiteral(e?.GetValue<string>() ?? ""))
+                .Select(e => e is JsonValue v && v.TryGetValue<string>(out var s) ? GbnfLiteral(s) : null)
+                .OfType<string>()
                 .ToList();
-            return $"({string.Join(" | ", vals)})";
+            if (vals.Count > 0)
+                return $"({string.Join(" | ", vals)})";
         }
         return "string";
     }
 
-    private static string BuildArrayRule(JsonObject obj, string name, Dictionary<string, string> rules)
+    private static string BuildArrayRule(JsonObject obj, string name, Dictionary<string, string> rules, JsonObject? defs = null)
     {
         string itemRule = "string";
         if (obj["items"] is JsonNode itemSchema)
         {
             string itemRuleName = $"{name}-item";
-            string built = BuildRule(itemSchema, itemRuleName, rules);
+            string built = BuildRule(itemSchema, itemRuleName, rules, defs);
             // Emit a named rule for compound expressions, inline simple rule references
             if (built.Contains(' ') || built.Contains('"') || built.Contains('('))
             {
@@ -161,14 +204,14 @@ public static class GbnfSchemaGenerator
         return ruleName;
     }
 
-    private static string BuildObjectRule(JsonObject obj, string name, Dictionary<string, string> rules)
+    private static string BuildObjectRule(JsonObject obj, string name, Dictionary<string, string> rules, JsonObject? defs = null)
     {
         var properties = obj["properties"] as JsonObject;
         if (properties is null || !properties.Any())
             return GbnfLiteral("{") + " ws " + GbnfLiteral("}");
 
         var required = (obj["required"] as JsonArray)
-            ?.Select(n => n?.GetValue<string>() ?? "")
+            ?.Select(n => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : "")
             .ToHashSet(StringComparer.Ordinal)
             ?? new HashSet<string>(StringComparer.Ordinal);
 
@@ -181,7 +224,7 @@ public static class GbnfSchemaGenerator
         {
             string propName     = prop.Key;
             string propRuleName = $"{name}-{ToRuleName(propName)}";
-            string propBody     = BuildRule(prop.Value ?? JsonValue.Create("string")!, propRuleName, rules);
+            string propBody     = BuildRule(prop.Value ?? JsonValue.Create("string")!, propRuleName, rules, defs);
 
             // Emit a named rule for compound expressions, inline simple rule references
             string valueRef;
