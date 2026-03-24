@@ -22,4 +22,10 @@
     <ProjectReference Include="..\YALMR\YALMR.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="SampleOCRImage.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

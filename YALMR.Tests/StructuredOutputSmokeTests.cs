@@ -7,7 +7,7 @@ namespace YALMR.Tests;
 
 public sealed class StructuredOutputSmokeTests(ITestOutputHelper output)
 {
-    private const string DefaultModelPath = @"C:\Users\Theo\.lmstudio\models\lmstudio-community\LFM2.5-1.2B-Instruct-GGUF\LFM2.5-1.2B-Instruct-Q8_0.gguf";
+    private const string DefaultModelPath = @"C:\Users\theo\.lmstudio\models\lmstudio-community\LFM2.5-1.2B-Instruct-GGUF\LFM2.5-1.2B-Instruct-Q4_K_M.gguf";
 
     private sealed record MiniStructuredResponse(string Name, int Count, bool Confirmed);
 
