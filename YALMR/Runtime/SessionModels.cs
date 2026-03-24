@@ -110,7 +110,19 @@ public sealed record ResponseObject(
 
 // ── Enums colocated with their primary consumer ─────────────────────
 
-public enum ImageRetentionPolicy { KeepAllImages, KeepLatestImage }
+public enum ImageRetentionPolicy
+{
+    /// <summary>Keep every image in every message (default — re-encodes all images each turn).</summary>
+    KeepAllImages,
+    /// <summary>Keep only the single most-recent image across the entire conversation.</summary>
+    KeepLatestImage,
+    /// <summary>
+    /// Drop images from user messages once an assistant reply follows them.
+    /// This avoids expensive vision re-encoding on follow-up text-only turns while
+    /// the assistant's earlier response already captures what was seen.
+    /// </summary>
+    DropProcessedImages
+}
 
 // ── Session configuration ───────────────────────────────────────────
 

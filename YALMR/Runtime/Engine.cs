@@ -204,26 +204,35 @@ public sealed class Engine : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Evaluates a multimodal prompt through the shared vision context.
+    /// Evaluates a multimodal prompt through the shared vision context and returns the new KV
+    /// cache position (<c>nPast</c>) after evaluation.
+    /// Pass <paramref name="startNPast"/> greater than zero to append to an existing KV cache
+    /// (incremental mode); pass <paramref name="addSpecial"/><c>=false</c> when the prompt is
+    /// a continuation that must not receive a BOS token.
     /// Serialized with an internal lock so concurrent sessions can safely share the vision pipeline.
     /// </summary>
-    internal async Task EvalVisionPromptAsync(
+    internal async Task<int> EvalVisionPromptAsync(
         Llama.Context llamaCtx,
         string mtmdPrompt,
         IReadOnlyList<string> imageBase64s,
         int nBatch,
-        CancellationToken ct)
+        int startNPast = 0,
+        bool addSpecial = true,
+        CancellationToken ct = default)
     {
         await _visionLock.WaitAsync(ct);
         try
         {
+            int newNPast = startNPast;
             await Task.Run(() =>
             {
-                int nPast = 0;
+                int nPast = startNPast;
                 Llama.Vision.EvalPromptWithBase64Images(
                     _visionContext, llamaCtx, mtmdPrompt, imageBase64s,
-                    ref nPast, nBatch: nBatch);
+                    ref nPast, nBatch: nBatch, addSpecial: addSpecial);
+                newNPast = nPast;
             }, ct);
+            return newNPast;
         }
         finally
         {

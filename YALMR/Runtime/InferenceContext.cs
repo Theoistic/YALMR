@@ -19,7 +19,13 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
     private readonly int _nBatch;
 
     private Llama.Context _context;
-    private bool _cacheContainsVision;
+    // True KV cache position.  For text-only state this equals _cachedTokens.Count (1:1 mapping).
+    // After a vision eval it diverges upward because each image marker expands to many KV slots.
+    private int _nPast;
+    // Index into _cachedTokens at which the first image token begins.
+    // Any KV trim to a prefix <= this index is safe (those positions are pure text, 1:1 mapping).
+    // int.MaxValue means the current KV cache contains no images (text-only mode).
+    private int _visionStartTokenIndex = int.MaxValue;
     private bool _disposed;
 
     // Stateful UTF-8 decoder for token streaming — buffers incomplete multi-byte sequences
@@ -44,6 +50,8 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
 
     /// <summary>
     /// Encodes a prompt into the native context, using the vision pipeline when images are present.
+    /// When the current KV cache is text-only and shares a prefix with the new prompt, only the
+    /// diverging suffix is evaluated — images already in the KV cache are never re-decoded.
     /// </summary>
     public async Task EncodePromptAsync(string prompt, int[] promptTokens, List<string> imageBase64s, CancellationToken ct)
     {
@@ -52,22 +60,69 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
             && !string.IsNullOrEmpty(_engine.ImageToken)
             && prompt.Contains(_engine.ImageToken, StringComparison.Ordinal);
 
-        if (hasImages)
-        {
-            ResetCacheInternal();
-            string mtmdPrompt = prompt.Replace(_engine.ImageToken, Llama.Vision.DefaultMarker, StringComparison.Ordinal);
-            int imageMarkerCount = CountOccurrences(mtmdPrompt, Llama.Vision.DefaultMarker);
-
-            if (imageMarkerCount != imageBase64s.Count)
-                throw new InvalidOperationException($"Prompt expects {imageMarkerCount} image(s), but {imageBase64s.Count} image payload(s) were collected from the fitted history.");
-
-            await _engine.EvalVisionPromptAsync(_context, mtmdPrompt, imageBase64s, _nBatch, ct);
-            _cacheContainsVision = true;
-        }
-        else
+        if (!hasImages)
         {
             await Task.Run(() => DecodePromptWithCacheContinuation(promptTokens), ct);
+            return;
         }
+
+        string mtmdPrompt = prompt.Replace(_engine.ImageToken, Llama.Vision.DefaultMarker, StringComparison.Ordinal);
+        int imageMarkerCount = CountOccurrences(mtmdPrompt, Llama.Vision.DefaultMarker);
+
+        if (imageMarkerCount != imageBase64s.Count)
+            throw new InvalidOperationException($"Prompt expects {imageMarkerCount} image(s), but {imageBase64s.Count} image payload(s) were collected from the fitted history.");
+
+        // ── Incremental vision path ────────────────────────────────────────────────────────────────
+        // When _nPast == _cachedTokens.Count the KV cache is text-only: every KV slot maps 1:1 to a
+        // token index, so we can safely trim to any prefix and append only what changed.
+        if (_nPast == _cachedTokens.Count && _cachedTokens.Count > 0)
+        {
+            int prefixLength = GetCommonPrefixLength(promptTokens, _cachedTokens);
+
+            if (prefixLength > 0)
+            {
+                if (prefixLength < _cachedTokens.Count &&
+                    !Llama.TryRemoveCacheRange(_context, 0, prefixLength))
+                {
+                    prefixLength = 0; // trim failed — fall through to full reset
+                }
+                else if (prefixLength < _cachedTokens.Count)
+                {
+                    _cachedTokens.RemoveRange(prefixLength, _cachedTokens.Count - prefixLength);
+                }
+
+                if (prefixLength > 0)
+                {
+                    int[] suffixTokens = promptTokens[prefixLength..];
+                    string suffixText = BuildTokenText(suffixTokens);
+                    string suffixMtmd = suffixText.Replace(_engine.ImageToken, Llama.Vision.DefaultMarker, StringComparison.Ordinal);
+
+                    int newNPast = await _engine.EvalVisionPromptAsync(
+                        _context, suffixMtmd, imageBase64s, _nBatch,
+                        startNPast: prefixLength, addSpecial: false, ct: ct);
+
+                    _cachedTokens.AddRange(suffixTokens);
+                    _nPast = newNPast;
+                    _visionStartTokenIndex = ComputeVisionStartInCachedTokens(suffixTokens, suffixText, prefixLength);
+                    return;
+                }
+            }
+        }
+
+        // ── Full reset + eval ─────────────────────────────────────────────────────────────────────
+        // First vision turn, or incremental was not possible (empty cache or no shared prefix).
+        ResetCacheInternal();
+
+        int visionStart = ComputeVisionStartFromPrompt(prompt, promptTokens);
+
+        int newNPastFull = await _engine.EvalVisionPromptAsync(
+            _context, mtmdPrompt, imageBase64s, _nBatch,
+            startNPast: 0, addSpecial: true, ct: ct);
+
+        // Populate _cachedTokens so future turns can prefix-match against this turn's content.
+        _cachedTokens.AddRange(promptTokens);
+        _nPast = newNPastFull;
+        _visionStartTokenIndex = visionStart;
     }
 
     /// <summary>
@@ -152,17 +207,20 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
         int rc = Llama.Decode(_context, batch);
         if (rc != 0) throw new InvalidOperationException($"llama_decode failed: {rc}");
         _cachedTokens.Add(token);
+        _nPast++;
     }
 
     private void DecodePromptWithCacheContinuation(int[] promptTokens)
     {
-        if (_cacheContainsVision) ResetCacheInternal();
-
         int prefixLength = GetCommonPrefixLength(promptTokens, _cachedTokens);
 
         if (prefixLength < _cachedTokens.Count)
         {
-            if (!Llama.TryRemoveCacheRange(_context, 0, prefixLength))
+            // Only trim within the text-only region of the KV cache.  If images are present
+            // (_visionStartTokenIndex < int.MaxValue), trimming past that boundary would corrupt
+            // the expanded image embeddings stored at positions >= _visionStartTokenIndex.
+            bool trimSafe = prefixLength <= _visionStartTokenIndex;
+            if (!trimSafe || !Llama.TryRemoveCacheRange(_context, 0, prefixLength))
             {
                 ResetCacheInternal();
                 prefixLength = 0;
@@ -187,6 +245,10 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
             }
             _cachedTokens.AddRange(suffix);
         }
+
+        // Pure-text decode: KV positions match token indices exactly.
+        _nPast = _cachedTokens.Count;
+        _visionStartTokenIndex = int.MaxValue;
     }
 
     private void ResetCacheInternal()
@@ -207,7 +269,66 @@ public sealed class InferenceContext : IAsyncDisposable, IDisposable
             kvCacheTypeK: _options.KvCacheTypeK,
             kvCacheTypeV: _options.KvCacheTypeV);
         _cachedTokens.Clear();
-        _cacheContainsVision = false;
+        _nPast = 0;
+        _visionStartTokenIndex = int.MaxValue;
+    }
+
+    /// <summary>
+    /// Reconstructs text from a sequence of token ids by concatenating each token's string
+    /// representation.  Used to build the suffix text for incremental vision evaluation.
+    /// </summary>
+    private string BuildTokenText(int[] tokens)
+    {
+        var sb = new StringBuilder(tokens.Length * 6);
+        foreach (int t in tokens)
+            sb.Append(_engine.TokenToString(t));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Returns the <c>_cachedTokens</c> index at which the first image token begins within
+    /// the given suffix, accounting for <paramref name="prefixLength"/> already in the cache.
+    /// Returns <see cref="int.MaxValue"/> when no image marker is present.
+    /// </summary>
+    private int ComputeVisionStartInCachedTokens(int[] suffixTokens, string suffixText, int prefixLength)
+    {
+        if (string.IsNullOrEmpty(_engine.ImageToken)) return int.MaxValue;
+
+        int imgCharPos = suffixText.IndexOf(_engine.ImageToken, StringComparison.Ordinal);
+        if (imgCharPos < 0) return int.MaxValue;
+
+        int charPos = 0;
+        for (int i = 0; i < suffixTokens.Length; i++)
+        {
+            charPos += _engine.TokenToString(suffixTokens[i]).Length;
+            if (charPos > imgCharPos)
+                return prefixLength + i;
+        }
+
+        return int.MaxValue;
+    }
+
+    /// <summary>
+    /// Returns the token index in <paramref name="promptTokens"/> at which the first image
+    /// marker begins, for use as <c>_visionStartTokenIndex</c> after a full-reset vision eval.
+    /// Returns <see cref="int.MaxValue"/> when no image marker is found.
+    /// </summary>
+    private int ComputeVisionStartFromPrompt(string prompt, int[] promptTokens)
+    {
+        if (string.IsNullOrEmpty(_engine.ImageToken) ||
+            !prompt.Contains(_engine.ImageToken, StringComparison.Ordinal))
+            return int.MaxValue;
+
+        int imgCharPos = prompt.IndexOf(_engine.ImageToken, StringComparison.Ordinal);
+        int charPos = 0;
+        for (int i = 0; i < promptTokens.Length; i++)
+        {
+            charPos += _engine.TokenToString(promptTokens[i]).Length;
+            if (charPos > imgCharPos)
+                return i;
+        }
+
+        return int.MaxValue;
     }
 
     private static int GetCommonPrefixLength(int[] prompt, List<int> cache)

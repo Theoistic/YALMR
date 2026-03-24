@@ -86,6 +86,10 @@ internal static class SessionParsing
         if (policy == ImageRetentionPolicy.KeepAllImages)
             return messages;
 
+        if (policy == ImageRetentionPolicy.DropProcessedImages)
+            return DropProcessedImagesCore(messages);
+
+        // KeepLatestImage — keep only the single most-recent image.
         int remainingImages = 1;
         var result = new List<ChatMessage>(messages.Count);
 
@@ -119,6 +123,56 @@ internal static class SessionParsing
             result.Insert(0, parts.Count == message.Parts.Count
                 ? message
                 : message with { Parts = parts.Count > 0 ? parts : null });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Strips images from user messages that already have an assistant reply following them.
+    /// Only the latest unresponded user message (if any) retains its images.
+    /// </summary>
+    private static IReadOnlyList<ChatMessage> DropProcessedImagesCore(IReadOnlyList<ChatMessage> messages)
+    {
+        // Find the index of the last assistant message.
+        // Any user message with images that appears *before* an assistant reply
+        // has already been "processed" — the model saw the image and responded.
+        int lastAssistantIndex = -1;
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i].Role == "assistant")
+            {
+                lastAssistantIndex = i;
+                break;
+            }
+        }
+
+        if (lastAssistantIndex < 0)
+            return messages; // No assistant reply yet — keep everything.
+
+        var result = new List<ChatMessage>(messages.Count);
+        for (int i = 0; i < messages.Count; i++)
+        {
+            var message = messages[i];
+
+            // Strip images from messages at or before the last assistant reply.
+            if (i < lastAssistantIndex && message.Parts is { Count: > 0 })
+            {
+                var textOnly = new List<ContentPart>();
+                foreach (var part in message.Parts)
+                {
+                    if (part is not ImagePart)
+                        textOnly.Add(part);
+                }
+
+                result.Add(textOnly.Count == message.Parts.Count
+                    ? message
+                    : message with { Parts = textOnly.Count > 0 ? textOnly : null });
+            }
+            else
+            {
+                result.Add(message);
+            }
         }
 
         return result;
