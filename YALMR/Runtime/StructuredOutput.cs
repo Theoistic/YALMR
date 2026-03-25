@@ -324,37 +324,58 @@ public static class StructuredOutputExtensions
     /// Sends <paramref name="prompt"/> and deserializes the model's JSON response into
     /// <typeparamref name="T"/>. Grammar-constrained sampling ensures the output is
     /// always valid JSON that matches the type's schema.
+    /// When <paramref name="allowTools"/> is <see langword="false"/> (default), tool calling is
+    /// disabled so the GBNF grammar constraint can take effect immediately.
+    /// When <paramref name="allowTools"/> is <see langword="true"/>, the model first processes
+    /// the prompt with full tool access (analysis phase), then a second grammar-constrained call
+    /// extracts the structured result (extraction phase).
     /// </summary>
-    public static async Task<T> AskAsync<T>(
+    public static Task<T> AskAsync<T>(
         this Session session,
         string prompt,
         JsonSerializerOptions? options = null,
+        bool allowTools = false,
         CancellationToken ct = default)
-    {
-        string grammar   = GbnfSchemaGenerator.FromType<T>(options);
-        var    override_ = session.DefaultInference with { Grammar = grammar };
-        var    reply     = await session.SendAsync(new ChatMessage("user", prompt), override_, ct);
-        string json      = ExtractJson(reply.Content ?? string.Empty);
-
-        return JsonSerializer.Deserialize<T>(json, options ?? s_deserializeOptions)
-               ?? throw new InvalidOperationException("Model returned null for structured output.");
-    }
+        => session.AskAsync<T>(new ChatMessage("user", prompt), options, allowTools, ct);
 
     /// <summary>
     /// Sends <paramref name="message"/> and deserializes the model's JSON response into
     /// <typeparamref name="T"/>. Grammar-constrained sampling ensures the output is
     /// always valid JSON that matches the type's schema.
+    /// When <paramref name="allowTools"/> is <see langword="false"/> (default), tool calling is
+    /// disabled so the GBNF grammar constraint can take effect immediately.
+    /// When <paramref name="allowTools"/> is <see langword="true"/>, the model first processes
+    /// the message with full tool access (analysis phase), then a second grammar-constrained call
+    /// extracts the structured result (extraction phase).
     /// </summary>
     public static async Task<T> AskAsync<T>(
         this Session session,
         ChatMessage message,
         JsonSerializerOptions? options = null,
+        bool allowTools = false,
         CancellationToken ct = default)
     {
-        string grammar   = GbnfSchemaGenerator.FromType<T>(options);
-        var    override_ = session.DefaultInference with { Grammar = grammar };
-        var    reply     = await session.SendAsync(message, override_, ct);
-        string json      = ExtractJson(reply.Content ?? string.Empty);
+        string grammar = GbnfSchemaGenerator.FromType<T>(options);
+
+        if (allowTools)
+        {
+            // Phase 1: let the model analyse with full tool access (no grammar constraint).
+            await session.SendAsync(message, ct);
+
+            // Phase 2: grammar-constrained extraction from the completed analysis.
+            var extractionOp = session.DefaultInference with { Grammar = grammar, Tools = null };
+            var extractReply = await session.SendAsync(
+                new ChatMessage("user", "Based on the above analysis, respond with only the JSON object."),
+                extractionOp, ct);
+
+            string extractedJson = ExtractJson(extractReply.Content ?? string.Empty);
+            return JsonSerializer.Deserialize<T>(extractedJson, options ?? s_deserializeOptions)
+                   ?? throw new InvalidOperationException("Model returned null for structured output.");
+        }
+
+        var override_ = session.DefaultInference with { Grammar = grammar, Tools = null };
+        var reply     = await session.SendAsync(message, override_, ct);
+        string json   = ExtractJson(reply.Content ?? string.Empty);
 
         return JsonSerializer.Deserialize<T>(json, options ?? s_deserializeOptions)
                ?? throw new InvalidOperationException("Model returned null for structured output.");
