@@ -181,6 +181,30 @@ public sealed class Session : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
+    /// Runs grammar-constrained generation in a completely fresh native context so the
+    /// session's KV cache is untouched.
+    /// </summary>
+    internal async Task<string> ExtractIsolatedAsync(
+        IReadOnlyList<ChatMessage> messages,
+        InferenceOptions inference,
+        CancellationToken ct)
+    {
+        ThrowIfDisposed();
+        var ctx = _engine.CreateInferenceContext(_options);
+        await using var _ = ctx;
+        string prompt = _engine.RenderPrompt(messages, inference);
+        int[] promptTokens = _engine.Tokenize(prompt);
+        await ctx.EncodePromptAsync(prompt, promptTokens, [], ct);
+        int maxTokens = inference.MaxOutputTokens.GetValueOrDefault() > 0
+            ? inference.MaxOutputTokens.GetValueOrDefault()
+            : _options.ContextTokens;
+        var sb = new StringBuilder();
+        await foreach (var token in ctx.GenerateTokensAsync(inference, maxTokens, ct).ConfigureAwait(false))
+            sb.Append(token.Text);
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Handles a response-style request and returns a response-style object.
     /// </summary>
     public async Task<ResponseObject> CreateResponseAsync(ResponseRequest request, CancellationToken ct = default)

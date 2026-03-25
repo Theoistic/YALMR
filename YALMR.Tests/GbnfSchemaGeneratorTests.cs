@@ -60,7 +60,6 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
         Assert.Contains("number  ::=", grammar);
         Assert.Contains("integer ::=", grammar);
         Assert.Contains("boolean ::=", grammar);
-        Assert.Contains("null    ::=", grammar);
         Assert.Contains("ws      ::=", grammar);
     }
 

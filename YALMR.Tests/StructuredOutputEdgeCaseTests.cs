@@ -18,6 +18,7 @@ namespace YALMR.Tests;
 /// explicit <see cref="CancellationTokenSource"/> timeout so a genuine hang surfaces
 /// as a failed test rather than a blocked test runner.
 /// </summary>
+[Collection("LocalModel")]
 public sealed class StructuredOutputEdgeCaseTests(ITestOutputHelper output)
 {
     private const string DefaultModelPath =

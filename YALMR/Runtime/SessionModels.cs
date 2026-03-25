@@ -78,7 +78,7 @@ public sealed record InferenceOptions
     public float? RepetitionPenalty { get; init; } = 1.0f;
     public bool? EnableThinking { get; init; } = true;
     public string? ReasoningEffort { get; init; }
-    public int? MaxOutputTokens { get; init; } = 512;
+    public int? MaxOutputTokens { get; init; } = 2048;
     public int? Seed { get; init; }
     public bool AddVisionId { get; init; } = false;
 

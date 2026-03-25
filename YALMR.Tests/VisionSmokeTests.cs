@@ -5,6 +5,7 @@ using Xunit.Abstractions;
 
 namespace YALMR.Tests;
 
+[Collection("LocalModel")]
 public sealed class VisionSmokeTests(ITestOutputHelper output)
 {
     private const string DefaultModelPath  = @"C:\Users\theo\.lmstudio\models\lmstudio-community\Qwen3.5-0.8B-GGUF\Qwen3.5-0.8B-Q8_0.gguf";
@@ -21,8 +22,8 @@ public sealed class VisionSmokeTests(ITestOutputHelper output)
         string modelPath  = Environment.GetEnvironmentVariable("YALMR_VISION_MODEL")  ?? DefaultModelPath;
         string mmprojPath = Environment.GetEnvironmentVariable("YALMR_VISION_MMPROJ") ?? DefaultMmprojPath;
 
-        Assert.True(File.Exists(modelPath),  $"Model not found: {modelPath}");
-        Assert.True(File.Exists(mmprojPath), $"Mmproj not found: {mmprojPath}");
+        Assert.True(File.Exists(modelPath),       $"Model not found: {modelPath}");
+        Assert.True(File.Exists(mmprojPath),      $"Mmproj not found: {mmprojPath}");
         Assert.True(File.Exists(SampleImagePath), $"Sample image not found: {SampleImagePath}");
 
         string backendDir = await LlamaRuntimeInstaller.EnsureInstalledAsync(LlamaBackend.Cpu);
@@ -85,8 +86,8 @@ public sealed class VisionSmokeTests(ITestOutputHelper output)
         string modelPath  = Environment.GetEnvironmentVariable("YALMR_VISION_MODEL")  ?? DefaultModelPath;
         string mmprojPath = Environment.GetEnvironmentVariable("YALMR_VISION_MMPROJ") ?? DefaultMmprojPath;
 
-        Assert.True(File.Exists(modelPath),  $"Model not found: {modelPath}");
-        Assert.True(File.Exists(mmprojPath), $"Mmproj not found: {mmprojPath}");
+        Assert.True(File.Exists(modelPath),       $"Model not found: {modelPath}");
+        Assert.True(File.Exists(mmprojPath),      $"Mmproj not found: {mmprojPath}");
         Assert.True(File.Exists(SampleImagePath), $"Sample image not found: {SampleImagePath}");
 
         string backendDir = await LlamaRuntimeInstaller.EnsureInstalledAsync(LlamaBackend.Cpu);
