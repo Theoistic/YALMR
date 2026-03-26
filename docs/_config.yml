@@ -1,19 +1,33 @@
 title: YALMR
 description: Yet Another LLM Runtime — run local GGUF models in .NET 10 via llama.cpp.
-theme: minima
+theme: just-the-docs
+
+color_scheme: dark
 
 url: "https://theoistic.github.io"
 baseurl: "/YALMR"
 
-header_pages:
-  - getting-started.md
-  - features/streaming.md
-  - features/tool-calling.md
-  - features/structured-output.md
-  - features/vision.md
-  - features/conversation-compaction.md
-  - features/mcp-integration.md
-  - features/multi-model-server.md
+# just-the-docs navigation
+nav_sort: order
+
+# Search
+search_enabled: true
+
+# Aux links in the top-right corner
+aux_links:
+  "GitHub":
+    - "https://github.com/Theoistic/YALMR"
+  "NuGet":
+    - "https://www.nuget.org/packages/YALMR"
+
+aux_links_new_tab: true
+
+# Footer
+footer_content: "MIT License &mdash; &copy; Theoistic. Powered by <a href=\"https://just-the-docs.com\">Just the Docs</a>."
+
+# Back to top link
+back_to_top: true
+back_to_top_text: "Back to top"
 
 markdown: kramdown
 highlighter: rouge
