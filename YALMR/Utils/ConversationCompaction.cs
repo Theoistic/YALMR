@@ -110,6 +110,13 @@ public sealed class TokenWindowConversationCompactor : IConversationCompactor
             if (context.CountTokens(candidate) > budget)
             {
                 tail.RemoveAt(0);
+
+                // If removing the message eliminated the only user query, put it
+                // back.  A prompt without a user message is unusable — the chat
+                // template will throw (e.g. raise_exception).
+                if (!HasRenderableUserQueryInTail(context, system, tail))
+                    tail.Insert(0, history[i]);
+
                 break;
             }
         }
@@ -158,6 +165,10 @@ public sealed class TokenWindowConversationCompactor : IConversationCompactor
             if (context.CountTokens(candidate) > budget)
             {
                 tail.RemoveAt(0);
+
+                if (!HasRenderableUserQueryInTail(context, system, tail))
+                    tail.Insert(0, history[i]);
+
                 break;
             }
         }
@@ -223,6 +234,18 @@ public sealed class TokenWindowConversationCompactor : IConversationCompactor
         }
 
         return history;
+    }
+
+    private static bool HasRenderableUserQueryInTail(
+        ConversationCompactionContext context,
+        ChatMessage? system,
+        List<ChatMessage> tail)
+    {
+        var candidate = new List<ChatMessage>(tail.Count + 1);
+        if (system is not null)
+            candidate.Add(system);
+        candidate.AddRange(tail);
+        return context.HasRenderableUserQuery(candidate);
     }
 
     private static ChatMessage? CompactMessage(ChatMessage message, ResolvedCompactionOptions options)
