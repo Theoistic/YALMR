@@ -97,12 +97,27 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
     /// </summary>
     private static string GetRootRuleBody(string grammar)
     {
+        string? rootBody = null;
         foreach (string line in grammar.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             if (line.StartsWith("root ::=", StringComparison.Ordinal))
-                return line["root ::= ".Length..];
+            {
+                rootBody = line["root ::= ".Length..];
+                break;
+            }
         }
-        throw new InvalidOperationException("No root rule found in grammar.");
+        if (rootBody is null)
+            throw new InvalidOperationException("No root rule found in grammar.");
+
+        // If the root body is a simple rule reference, resolve it
+        string candidate = rootBody.Trim();
+        if (!candidate.Contains(' ') && !candidate.Contains('"'))
+        {
+            string? resolved = GetRuleBody(grammar, candidate);
+            if (resolved is not null)
+                return resolved;
+        }
+        return rootBody;
     }
 
     /// <summary>
@@ -125,15 +140,21 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
     /// </summary>
     private static string? GetPropertyValueExpr(string rootBody, string jsonKey)
     {
-        // Find the pattern: "\"jsonKey\"" ws ":" ws VALUE
+        // Find the pattern: "\"jsonKey\"" (":" | ws ":" ws) VALUE
         string keyLiteral = $"\"\\\"" + jsonKey + "\\\"\"";
         int idx = rootBody.IndexOf(keyLiteral, StringComparison.Ordinal);
         if (idx < 0) return null;
 
-        // Skip past: "\"key\"" ws ":" ws
+        // Skip past the key literal and try both compact and ws separators
         string remainder = rootBody[(idx + keyLiteral.Length)..];
-        string colonPattern = " ws \":\" ws ";
-        int colonIdx = remainder.IndexOf(colonPattern, StringComparison.Ordinal);
+        int colonIdx = -1;
+        string colonPattern = " \":\" ";
+        colonIdx = remainder.IndexOf(colonPattern, StringComparison.Ordinal);
+        if (colonIdx < 0)
+        {
+            colonPattern = " ws \":\" ws ";
+            colonIdx = remainder.IndexOf(colonPattern, StringComparison.Ordinal);
+        }
         if (colonIdx < 0) return null;
 
         string afterColon = remainder[(colonIdx + colonPattern.Length)..];
@@ -337,7 +358,7 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
 
         // The root rule should start with the object open brace, not contain "| null"
         Assert.DoesNotContain("| null", rootBody);
-        Assert.Contains("\"{\"", grammar.Split('\n')[0]);
+        Assert.Contains("\"{\"", rootBody);
     }
 
     // ── Array item nullability tests ─────────────────────────────────────────
@@ -545,10 +566,10 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
         output.WriteLine(grammar);
 
         // Enum values should appear as GBNF literals
-        Assert.Contains("\"Low\"", grammar);
-        Assert.Contains("\"Medium\"", grammar);
-        Assert.Contains("\"High\"", grammar);
-        Assert.Contains("\"Critical\"", grammar);
+        Assert.Contains("\\\"Low\\\"", grammar);
+        Assert.Contains("\\\"Medium\\\"", grammar);
+        Assert.Contains("\\\"High\\\"", grammar);
+        Assert.Contains("\\\"Critical\\\"", grammar);
 
         AssertNoEmptyBodyRules(grammar);
     }
@@ -560,8 +581,8 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
         output.WriteLine(grammar);
 
         // Should contain enum literals
-        Assert.Contains("\"Low\"", grammar);
-        Assert.Contains("\"Critical\"", grammar);
+        Assert.Contains("\\\"Low\\\"", grammar);
+        Assert.Contains("\\\"Critical\\\"", grammar);
 
         // Nullable enum should include a null alternative (from the enum array's null entry)
         Assert.Contains("| null", grammar);
@@ -678,6 +699,5 @@ public sealed class GbnfSchemaCorrectnessTests(ITestOutputHelper output)
         Assert.Contains("number  ::=", grammar);
         Assert.Contains("integer ::=", grammar);
         Assert.Contains("boolean ::=", grammar);
-        Assert.Contains("ws      ::=", grammar);
     }
 }

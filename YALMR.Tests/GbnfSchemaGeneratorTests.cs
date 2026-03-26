@@ -43,7 +43,23 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
 
     private void Dump(string grammar) => output.WriteLine($"\n{grammar}");
 
-    // ── Structural ───────────────────────────────────────────────────────────
+    private static string GetResolvedRootBody(string grammar)
+    {
+        var rootLine = grammar.ReplaceLineEndings("\n").Split('\n')[0];
+        var body = rootLine["root ::= ".Length..];
+        if (!body.Contains(' ') && !body.Contains('"'))
+        {
+            foreach (var line in RuleLines(grammar))
+            {
+                var (name, ruleBody) = SplitRule(line);
+                if (name == body)
+                    return ruleBody;
+            }
+        }
+        return body;
+    }
+
+    // ── Structural
 
     [Fact]
     public void Grammar_StartsWithRootRule()
@@ -60,7 +76,6 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
         Assert.Contains("number  ::=", grammar);
         Assert.Contains("integer ::=", grammar);
         Assert.Contains("boolean ::=", grammar);
-        Assert.Contains("ws      ::=", grammar);
     }
 
     [Theory]
@@ -98,7 +113,7 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
         }
     }
 
-    // ── Type mappings ────────────────────────────────────────────────────────
+    // ── Type mappings
 
     [Fact]
     public void Grammar_SimpleRecord_AllPropertyKeysPresent()
@@ -114,11 +129,11 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
     public void Grammar_SimpleRecord_CorrectTypeRefsInRootRule()
     {
         string grammar  = GbnfSchemaGenerator.FromType<SimpleRecord>();
-        string rootLine = grammar.ReplaceLineEndings("\n").Split('\n')[0];
-        Assert.Contains("string",  rootLine); // Name   → string
-        Assert.Contains("integer", rootLine); // Age    → integer
-        Assert.Contains("number",  rootLine); // Score  → number
-        Assert.Contains("boolean", rootLine); // Active → boolean
+        string resolved = GetResolvedRootBody(grammar);
+        Assert.Contains("string",  resolved); // Name   → string
+        Assert.Contains("integer", resolved); // Age    → integer
+        Assert.Contains("number",  resolved); // Score  → number
+        Assert.Contains("boolean", resolved); // Active → boolean
     }
 
     // ── Nullable ─────────────────────────────────────────────────────────────
@@ -145,7 +160,11 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
     {
         string grammar = GbnfSchemaGenerator.FromType<WithStringArray>();
         Dump(grammar);
-        Assert.Contains("-array ::=", grammar);
+        Assert.True(RuleLines(grammar).Any(l =>
+        {
+            var (_, body) = SplitRule(l);
+            return body.Contains("\"[\"") && body.Contains("\"]\"");
+        }), "No array rule found in grammar");
         Assert.Contains("\"[\"", grammar);
         Assert.Contains("\"]\"", grammar);
     }
@@ -155,7 +174,11 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
     {
         string grammar = GbnfSchemaGenerator.FromType<WithIntArray>();
         // The array rule body should reference integer
-        string arrayRuleLine = RuleLines(grammar).First(l => l.Contains("-array ::="));
+        string arrayRuleLine = RuleLines(grammar).First(l =>
+        {
+            var (_, body) = SplitRule(l);
+            return body.Contains("\"[\"") && body.Contains("\"]\"");
+        });
         Assert.Contains("integer", arrayRuleLine);
     }
 
@@ -265,10 +288,10 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
         };
 
         string grammar = GbnfSchemaGenerator.FromJsonSchemaNode(schema);
-        string rootLine = grammar.ReplaceLineEndings("\n").Split('\n')[0];
+        string resolved = GetResolvedRootBody(grammar);
         // Should produce (string | null), not a multi-variant union
-        Assert.Contains("string", rootLine);
-        Assert.Contains("| null", rootLine);
+        Assert.Contains("string", resolved);
+        Assert.Contains("| null", resolved);
     }
 
     // ── GbnfLiteral correctness (tested through generated output) ────────────
@@ -296,24 +319,26 @@ public class GbnfSchemaGeneratorTests(ITestOutputHelper output)
     public void Grammar_InvoiceResult_RootRuleContainsAllKeys()
     {
         string grammar  = GbnfSchemaGenerator.FromType<InvoiceResult>();
-        string rootLine = grammar.ReplaceLineEndings("\n").Split('\n')[0];
+        string resolved = GetResolvedRootBody(grammar);
         Dump(grammar);
-        Assert.StartsWith("root ::= ",        rootLine);
-        Assert.Contains(EscapedJsonKey("invoiceNumber"), rootLine);
-        Assert.Contains(EscapedJsonKey("total"), rootLine);
-        Assert.Contains("number",              rootLine); // decimal → number
-        Assert.Contains("-array",              rootLine); // items → named array rule
+        Assert.StartsWith("root ::= ", grammar);
+        Assert.Contains(EscapedJsonKey("invoiceNumber"), resolved);
+        Assert.Contains(EscapedJsonKey("total"), resolved);
+        Assert.Contains("number",              grammar); // decimal → number
     }
 
     [Fact]
     public void Grammar_InvoiceResult_ArrayRuleExistsAndIsWellFormed()
     {
         string grammar = GbnfSchemaGenerator.FromType<InvoiceResult>();
-        string arrayLine = RuleLines(grammar).FirstOrDefault(l => l.Contains("-array ::="))
+        string arrayLine = RuleLines(grammar).FirstOrDefault(l =>
+            {
+                var (_, body) = SplitRule(l);
+                return body.Contains("\"[\"") && body.Contains("\"]\"");
+            })
             ?? throw new Exception("No array rule found in grammar");
         Assert.Contains("\"[\"", arrayLine);
         Assert.Contains("\"]\"", arrayLine);
-        Assert.Contains("\"[\"", arrayLine);
     }
 
     [Fact]

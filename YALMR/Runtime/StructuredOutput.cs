@@ -15,9 +15,9 @@ public static class GbnfSchemaGenerator
 {
     private static readonly JsonSerializerOptions s_schemaOptions = new()
     {
-        PropertyNamingPolicy   = JsonNamingPolicy.CamelCase,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        TypeInfoResolver       = new DefaultJsonTypeInfoResolver(),
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
     };
 
     private static readonly JsonSchemaExporterOptions s_exporterOptions = new()
@@ -25,406 +25,495 @@ public static class GbnfSchemaGenerator
         TreatNullObliviousAsNonNullable = true,
     };
 
-    // Terminal rules that may be appended to the grammar.
-    // Only terminals actually referenced by the generated rules are emitted.
-    //
-    // ws is bounded to at most 4 characters instead of the recursive ([ \t\n\r] ws)?
-    // used by the llama.cpp reference grammar.  The recursive form allows unlimited
-    // whitespace, and small models can get stuck generating spaces indefinitely when
-    // they are uncertain about the next value.  Bounding ws to 4 characters is enough
-    // for newline + 3-space indent while preventing the sampler from looping.
+    public sealed record Options
+    {
+        /// <summary>
+        /// Emit compact JSON grammar with no interior whitespace. This is the most stable mode for llama.cpp.
+        /// </summary>
+        public bool CompactJson { get; init; } = true;
+
+        /// <summary>
+        /// Allow arrays to be empty. For extraction workloads you may want false.
+        /// </summary>
+        public bool AllowEmptyArrays { get; init; } = true;
+
+        /// <summary>
+        /// Use underscore rule names instead of hyphenated names.
+        /// Note: llama.cpp's grammar parser only supports [a-zA-Z0-9-] in rule names,
+        /// so this should be false when using llama.cpp backends.
+        /// </summary>
+        public bool UseUnderscoreRuleNames { get; init; } = false;
+
+        /// <summary>
+        /// Emit only terminal rules actually referenced by generated rules.
+        /// </summary>
+        public bool EmitOnlyReferencedTerminals { get; init; } = true;
+
+        /// <summary>
+        /// Include a ws terminal and allow optional whitespace around structural tokens.
+        /// CompactJson=false will automatically use ws.
+        /// </summary>
+        public bool AllowInteriorWhitespace { get; init; } = false;
+    }
+
     private const string CommonRules = """
         string  ::= "\"" ([^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
         number  ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? (([eE] [-+]? [0-9]+))?
         integer ::= "-"? ([0-9] | [1-9] [0-9]*)
         boolean ::= "true" | "false"
         null    ::= "null"
-        ws      ::= ([ \t\n\r] ([ \t\n\r] ([ \t\n\r] ([ \t\n\r])?)?)?)?
+        ws      ::= [ \t\n\r]*
         """;
 
-    /// <summary>
-    /// Generates a GBNF grammar for <typeparamref name="T"/>.
-    /// </summary>
-    /// <param name="options">
-    /// Optional serializer options. When supplied the same naming policy is used for
-    /// both the GBNF property keys and the final JSON deserialization.
-    /// </param>
-    public static string FromType<T>(JsonSerializerOptions? options = null) => FromType(typeof(T), options);
+    public static string FromType<T>(JsonSerializerOptions? serializerOptions = null, Options? generatorOptions = null)
+        => FromType(typeof(T), serializerOptions, generatorOptions);
 
-    /// <summary>
-    /// Generates a GBNF grammar for the given <paramref name="type"/>.
-    /// </summary>
-    /// <param name="options">
-    /// Optional serializer options. When supplied the same naming policy is used for
-    /// both the GBNF property keys and the final JSON deserialization.
-    /// </param>
-    public static string FromType(Type type, JsonSerializerOptions? options = null)
+    public static string FromType(Type type, JsonSerializerOptions? serializerOptions = null, Options? generatorOptions = null)
     {
-        var schema = JsonSchemaExporter.GetJsonSchemaAsNode(EnsureSchemaOptions(options), type, s_exporterOptions);
-        return FromJsonSchemaNode(schema);
+        var schema = JsonSchemaExporter.GetJsonSchemaAsNode(EnsureSchemaOptions(serializerOptions), type, s_exporterOptions);
+        return FromJsonSchemaNode(schema, generatorOptions);
     }
 
-    // Returns options that are safe to pass to JsonSchemaExporter (TypeInfoResolver required).
-    private static JsonSerializerOptions EnsureSchemaOptions(JsonSerializerOptions? options)
+    public static string FromJsonSchemaNode(JsonNode schema, Options? generatorOptions = null)
     {
-        if (options is null) return s_schemaOptions;
-        // Already read-only → TypeInfoResolver was set when it was first used.
-        if (options.IsReadOnly || options.TypeInfoResolver is not null) return options;
-        return new JsonSerializerOptions(options) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
-    }
-
-    /// <summary>
-    /// Generates a GBNF grammar from a raw JSON Schema node.
-    /// </summary>
-    public static string FromJsonSchemaNode(JsonNode schema)
-    {
-        var rules     = new Dictionary<string, string>(StringComparer.Ordinal);
-        var defs      = (schema as JsonObject)?["$defs"] as JsonObject;
-        var refToRule = new Dictionary<string, string>(StringComparer.Ordinal);
-        string root = BuildRule(schema, "root", rules, defs, schema, refToRule);
-        if (!rules.ContainsKey("root"))
-            rules["root"] = root;
+        var options = generatorOptions ?? new Options();
+        var context = new GeneratorContext(schema, options);
+        string rootRef = context.EnsureRule(schema, "root_type");
 
         var sb = new StringBuilder();
-        // root rule always first
-        sb.AppendLine($"root ::= {rules["root"]}");
-        foreach (var (name, body) in rules)
+        sb.AppendLine($"root ::= {rootRef}");
+
+        foreach (var kvp in context.Rules)
         {
-            if (name == "root") continue;
-            sb.AppendLine($"{name} ::= {body}");
+            if (string.IsNullOrEmpty(kvp.Value))
+                continue;
+
+            sb.AppendLine($"{kvp.Key} ::= {kvp.Value}");
         }
-        // Emit only the terminal rules actually referenced by the generated grammar.
-        // ws is always emitted since every object/array rule uses it.
-        string allBodies = string.Join(" ", rules.Values);
+
+        sb.AppendLine();
+
+        string allBodies = string.Join(" ", context.Rules.Values.Where(v => !string.IsNullOrEmpty(v)));
         foreach (string line in CommonRules.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             string terminalName = line.Split("::=", 2)[0].Trim();
-            if (terminalName == "ws" || ReferencesTerminal(allBodies, terminalName))
+            if (!options.EmitOnlyReferencedTerminals || terminalName == "ws" && context.UsesWhitespace || ReferencesRule(allBodies, terminalName))
+            {
+                if (terminalName == "ws" && !context.UsesWhitespace)
+                    continue;
+
                 sb.AppendLine(line);
+            }
         }
+
         return sb.ToString();
     }
 
-    // -------------------------------------------------------------------------
-
-    private static string BuildRule(JsonNode schema, string name, Dictionary<string, string> rules,
-        JsonObject? defs = null, JsonNode? rootSchema = null, Dictionary<string, string>? refToRule = null)
+    private static JsonSerializerOptions EnsureSchemaOptions(JsonSerializerOptions? options)
     {
-        if (schema is not JsonObject obj)
-            return "string"; // fallback
+        if (options is null)
+            return s_schemaOptions;
 
-        // $ref → resolve from $defs or via JSON Pointer
-        if (obj["$ref"] is JsonValue refVal && refVal.TryGetValue<string>(out var refPath))
+        if (options.IsReadOnly || options.TypeInfoResolver is not null)
+            return options;
+
+        return new JsonSerializerOptions(options)
         {
-            // #/$defs/... (standard JSON Schema $defs)
-            if (refPath.StartsWith("#/$defs/", StringComparison.Ordinal))
-            {
-                string defKey   = refPath["#/$defs/".Length..];
-                string ruleName = ToRuleName(defKey);
-                if (!rules.ContainsKey(ruleName))
-                {
-                    if (defs?[defKey] is JsonNode defSchema)
-                    {
-                        rules[ruleName] = string.Empty; // reserve slot to guard against self-referential types
-                        rules[ruleName] = BuildRule(defSchema, ruleName, rules, defs, rootSchema, refToRule);
-                    }
-                    else return "string";
-                }
-                return ruleName;
-            }
-
-            // JSON Pointer (e.g. #/properties/left) — used by .NET 10+
-            if (refPath.StartsWith("#/", StringComparison.Ordinal) && rootSchema is not null)
-            {
-                if (refToRule is not null && refToRule.TryGetValue(refPath, out string? existing))
-                    return existing;
-
-                string ptrRuleName = RefPathToRuleName(refPath);
-                while (rules.ContainsKey(ptrRuleName)) ptrRuleName += "-r";
-
-                refToRule ??= new Dictionary<string, string>(StringComparer.Ordinal);
-                refToRule[refPath] = ptrRuleName;
-                rules[ptrRuleName] = string.Empty; // guard against recursion
-
-                var targetSchema = ResolveJsonPointer(rootSchema, refPath);
-                if (targetSchema is not null)
-                    rules[ptrRuleName] = BuildRule(targetSchema, ptrRuleName, rules, defs, rootSchema, refToRule);
-                else
-                    return "string";
-
-                return ptrRuleName;
-            }
-
-            return "string";
-        }
-
-        // anyOf → nullable or union
-        if (obj["anyOf"] is JsonArray anyOf)
-        {
-            var variants = anyOf
-                .OfType<JsonObject>()
-                .Select((v, i) => BuildRule(v, $"{name}-v{i}", rules, defs, rootSchema, refToRule))
-                .Distinct()
-                .ToList();
-
-            // Collapse the common "T | null" pattern
-            if (variants.Count == 2 && variants.Contains("null"))
-            {
-                string nonNull = variants.First(v => v != "null");
-                return $"({nonNull} | null)";
-            }
-
-            return $"({string.Join(" | ", variants)})";
-        }
-
-        // "type" can be a string or an array (e.g. ["string", "null"])
-        if (obj["type"] is JsonArray typeArr)
-        {
-            var variants = typeArr
-                .Select((v, i) =>
-                {
-                    if (v is not JsonValue jv || !jv.TryGetValue<string>(out var typeName)) return "string";
-                    return typeName == "null"
-                        ? "null"
-                        : BuildRule(CloneSchemaWithType(obj, typeName), $"{name}-v{i}", rules, defs, rootSchema, refToRule);
-                })
-                .Distinct()
-                .ToList();
-
-            if (variants.Count == 2 && variants.Contains("null"))
-            {
-                string nonNull = variants.First(v => v != "null");
-                return $"({nonNull} | null)";
-            }
-            return $"({string.Join(" | ", variants)})";
-        }
-
-        string? type = obj["type"] is JsonValue typeVal && typeVal.TryGetValue<string>(out var ts) ? ts : null;
-
-        // enum values (may appear without a "type" key, e.g. JsonStringEnumConverter)
-        if (obj["enum"] is JsonArray topEnums)
-        {
-            var vals = new List<string>();
-            bool hasNull = false;
-            foreach (var e in topEnums)
-            {
-                if (e is JsonValue v && v.TryGetValue<string>(out var s))
-                    vals.Add(GbnfLiteral(s));
-                else if (e is null || (e is JsonValue nv && nv.GetValueKind() == JsonValueKind.Null))
-                    hasNull = true;
-            }
-            if (vals.Count > 0)
-            {
-                string alternatives = string.Join(" | ", vals);
-                return hasNull ? $"({alternatives} | null)" : $"({alternatives})";
-            }
-        }
-
-        return type switch
-        {
-            "string"  => BuildStringRule(obj),
-            "integer" => "integer",
-            "number"  => "number",
-            "boolean" => "boolean",
-            "null"    => "null",
-            "array"   => BuildArrayRule(obj, name, rules, defs, rootSchema, refToRule),
-            "object"  => BuildObjectRule(obj, name, rules, defs, rootSchema, refToRule),
-            _         => "string",
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
         };
     }
 
-    private static string BuildStringRule(JsonObject obj)
+    private sealed class GeneratorContext
     {
-        // enum values
-        if (obj["enum"] is JsonArray enums)
-        {
-            var vals = new List<string>();
-            bool hasNull = false;
-            foreach (var e in enums)
-            {
-                if (e is JsonValue v && v.TryGetValue<string>(out var s))
-                    vals.Add(GbnfLiteral(s));
-                else if (e is null || (e is JsonValue nv && nv.GetValueKind() == JsonValueKind.Null))
-                    hasNull = true;
-            }
-            if (vals.Count > 0)
-            {
-                string alternatives = string.Join(" | ", vals);
-                return hasNull ? $"({alternatives} | null)" : $"({alternatives})";
-            }
-        }
-        return "string";
-    }
+        private readonly JsonNode _rootSchema;
+        private readonly JsonObject? _defs;
+        private readonly Options _options;
 
-    private static string BuildArrayRule(JsonObject obj, string name, Dictionary<string, string> rules,
-        JsonObject? defs = null, JsonNode? rootSchema = null, Dictionary<string, string>? refToRule = null)
-    {
-        string itemRule = "string";
-        if (obj["items"] is JsonNode itemSchema)
+        // Memoization by schema path / ref key.
+        private readonly Dictionary<string, string> _schemaKeyToRule = new(StringComparer.Ordinal);
+
+        public Dictionary<string, string> Rules { get; } = new(StringComparer.Ordinal);
+
+        public bool UsesWhitespace => !_options.CompactJson || _options.AllowInteriorWhitespace;
+
+        public GeneratorContext(JsonNode rootSchema, Options options)
         {
-            string itemRuleName = $"{name}-item";
-            string built = BuildRule(itemSchema, itemRuleName, rules, defs, rootSchema, refToRule);
-            // Emit a named rule for compound expressions, inline simple rule references
-            if (built.Contains(' ') || built.Contains('"') || built.Contains('('))
-            {
-                rules[itemRuleName] = built;
-                itemRule = itemRuleName;
-            }
-            else
-            {
-                itemRule = built;
-            }
+            _rootSchema = rootSchema;
+            _defs = (rootSchema as JsonObject)?["$defs"] as JsonObject;
+            _options = options;
         }
 
-        string ruleName = $"{name}-array";
-        rules[ruleName] = $"{GbnfLiteral("[")} ws ({itemRule} (ws {GbnfLiteral(",")} ws {itemRule})*)? ws {GbnfLiteral("]")}";
-        return ruleName;
-    }
-
-    private static string BuildObjectRule(JsonObject obj, string name, Dictionary<string, string> rules,
-        JsonObject? defs = null, JsonNode? rootSchema = null, Dictionary<string, string>? refToRule = null)
-    {
-        var properties = obj["properties"] as JsonObject;
-        if (properties is null || !properties.Any())
-            return GbnfLiteral("{") + " ws " + GbnfLiteral("}");
-
-        var sb = new StringBuilder();
-        sb.Append(GbnfLiteral("{"));
-        sb.Append(" ws ");
-
-        bool first = true;
-        foreach (var prop in properties)
+        public string EnsureRule(JsonNode? schema, string suggestedName, string? schemaKey = null)
         {
-            string propName     = prop.Key;
-            string propRuleName = $"{name}-{ToRuleName(propName)}";
-            string propBody     = BuildRule(prop.Value ?? JsonValue.Create("string")!, propRuleName, rules, defs, rootSchema, refToRule);
+            if (schema is not JsonObject obj)
+                return "string";
 
-            // Emit a named rule for compound expressions, inline simple rule references
-            string valueRef;
-            if (propBody.Contains(' ') || propBody.Contains('"') || propBody.Contains('('))
-            {
-                rules[propRuleName] = propBody;
-                valueRef = propRuleName;
-            }
-            else
-            {
-                valueRef = propBody;
-            }
+            if (TryGetDirectTerminal(obj, out string? terminal))
+                return terminal!;
 
-            if (!first)
-            {
-                sb.Append(" ws ");
-                sb.Append(GbnfLiteral(","));
-                sb.Append(" ws ");
-            }
+            if (obj["$ref"] is JsonValue refVal && refVal.TryGetValue<string>(out string? refPath))
+                return ResolveReference(refPath!);
 
-            sb.Append(GbnfJsonKey(propName));
-            sb.Append(" ws ");
-            sb.Append(GbnfLiteral(":"));
-            sb.Append(" ws ");
-            sb.Append(valueRef);
+            schemaKey ??= suggestedName;
+            if (_schemaKeyToRule.TryGetValue(schemaKey, out string? existing))
+                return existing;
 
-            first = false;
+            string ruleName = EnsureUniqueName(suggestedName);
+            _schemaKeyToRule[schemaKey] = ruleName;
+            Rules[ruleName] = string.Empty; // recursion sentinel
+            Rules[ruleName] = BuildRuleBody(obj, ruleName, schemaKey);
+            return ruleName;
         }
 
-        sb.Append(" ws ");
-        sb.Append(GbnfLiteral("}"));
-        return sb.ToString();
+        private string BuildRuleBody(JsonObject obj, string ruleName, string schemaKey)
+        {
+            if (obj["enum"] is JsonArray enums)
+                return BuildEnumBody(enums);
+
+            if (obj["anyOf"] is JsonArray anyOf)
+                return BuildAnyOfBody(anyOf, ruleName, schemaKey);
+
+            if (obj["type"] is JsonArray typeArray)
+                return BuildTypeArrayBody(obj, typeArray, ruleName, schemaKey);
+
+            string? type = obj["type"] is JsonValue typeVal && typeVal.TryGetValue<string>(out string? typeName)
+                ? typeName
+                : null;
+
+            return type switch
+            {
+                "object" => BuildObjectBody(obj, ruleName, schemaKey),
+                "array" => BuildArrayBody(obj, ruleName, schemaKey),
+                "integer" => "integer",
+                "number" => "number",
+                "boolean" => "boolean",
+                "null" => "null",
+                _ => "string",
+            };
+        }
+
+        private bool TryGetDirectTerminal(JsonObject obj, out string? terminal)
+        {
+            terminal = null;
+
+            if (obj["enum"] is JsonArray)
+                return false;
+            if (obj["anyOf"] is JsonArray)
+                return false;
+            if (obj["type"] is JsonArray)
+                return false;
+
+            string? type = obj["type"] is JsonValue typeVal && typeVal.TryGetValue<string>(out string? typeName)
+                ? typeName
+                : null;
+
+            terminal = type switch
+            {
+                "string" => "string",
+                "integer" => "integer",
+                "number" => "number",
+                "boolean" => "boolean",
+                "null" => "null",
+                _ => null,
+            };
+
+            return terminal is not null;
+        }
+
+        private string BuildAnyOfBody(JsonArray anyOf, string ruleName, string schemaKey)
+        {
+            var variants = new List<string>();
+            for (int i = 0; i < anyOf.Count; i++)
+            {
+                var child = anyOf[i];
+                if (child is null)
+                    continue;
+
+                variants.Add(EnsureRule(child, $"{ruleName}_v{i}", $"{schemaKey}/anyOf/{i}"));
+            }
+
+            return JoinDistinctAlternatives(variants);
+        }
+
+        private string BuildTypeArrayBody(JsonObject original, JsonArray types, string ruleName, string schemaKey)
+        {
+            var variants = new List<string>();
+            int branch = 0;
+            foreach (var entry in types)
+            {
+                if (entry is not JsonValue jv || !jv.TryGetValue<string>(out string? typeName))
+                    continue;
+
+                if (typeName == "null")
+                {
+                    variants.Add("null");
+                    continue;
+                }
+
+                var clone = (JsonObject)original.DeepClone();
+                clone["type"] = typeName;
+                variants.Add(EnsureRule(clone, $"{ruleName}_{NormalizeRuleName(typeName)}", $"{schemaKey}/type/{branch++}:{typeName}"));
+            }
+
+            return JoinDistinctAlternatives(variants);
+        }
+
+        private string BuildObjectBody(JsonObject obj, string ruleName, string schemaKey)
+        {
+            var properties = obj["properties"] as JsonObject;
+            if (properties is null || properties.Count == 0)
+                return WrapObject(Array.Empty<string>());
+
+            var pairs = new List<string>(properties.Count);
+            foreach (var property in properties)
+            {
+                string keyLiteral = GbnfJsonKey(property.Key);
+                string valueRule = EnsureRule(property.Value, $"{ruleName}_{NormalizeRuleName(property.Key)}", $"{schemaKey}/properties/{property.Key}");
+                pairs.Add($"{keyLiteral}{MaybeWs()}\":\"{MaybeWs()}{valueRule}");
+            }
+
+            return WrapObject(pairs);
+        }
+
+        private string BuildArrayBody(JsonObject obj, string ruleName, string schemaKey)
+        {
+            string itemRule = EnsureRule(obj["items"], $"{ruleName}_item", $"{schemaKey}/items");
+
+            string tail = $"({GbnfLiteral(",")} {itemRule})*";
+            string body = _options.AllowEmptyArrays
+                ? $"({itemRule} {tail})?"
+                : $"{itemRule} {tail}";
+
+            return WrapArray(body);
+        }
+
+        private string BuildEnumBody(JsonArray enums)
+        {
+            var variants = new List<string>();
+            foreach (var entry in enums)
+            {
+                if (entry is null)
+                {
+                    variants.Add("null");
+                    continue;
+                }
+
+                if (entry is not JsonValue v)
+                    continue;
+
+                if (v.TryGetValue<string>(out string? s))
+                {
+                    variants.Add(GbnfLiteral($"\"{s}\""));
+                    continue;
+                }
+
+                if (v.TryGetValue<bool>(out bool b))
+                {
+                    variants.Add(b ? "true" : "false");
+                    continue;
+                }
+
+                if (v.GetValueKind() == JsonValueKind.Null)
+                {
+                    variants.Add("null");
+                    continue;
+                }
+
+                // For numeric enums, emit the exact JSON literal.
+                variants.Add(v.ToJsonString());
+            }
+
+            return JoinDistinctAlternatives(variants);
+        }
+
+        private string ResolveReference(string refPath)
+        {
+            string schemaKey = $"ref:{refPath}";
+            if (_schemaKeyToRule.TryGetValue(schemaKey, out string? existing))
+                return existing;
+
+            JsonNode? target = ResolveJsonPointer(_rootSchema, refPath, _defs);
+            if (target is null)
+                return "string";
+
+            string ruleName = RefPathToRuleName(refPath);
+            return EnsureRule(target, ruleName, schemaKey);
+        }
+
+        private string EnsureUniqueName(string baseName)
+        {
+            string normalized = NormalizeRuleName(baseName);
+            if (!Rules.ContainsKey(normalized))
+                return normalized;
+
+            int i = 1;
+            while (Rules.ContainsKey($"{normalized}_{i}"))
+                i++;
+
+            return $"{normalized}_{i}";
+        }
+
+        private string NormalizeRuleName(string name)
+        {
+            var sb = new StringBuilder(name.Length + 8);
+            bool prevUnderscore = false;
+
+            foreach (char c in name)
+            {
+                char mapped;
+                if (char.IsLetterOrDigit(c))
+                {
+                    mapped = char.ToLowerInvariant(c);
+                }
+                else
+                {
+                    mapped = _options.UseUnderscoreRuleNames ? '_' : '-';
+                }
+
+                if ((mapped == '_' || mapped == '-') && (sb.Length == 0 || prevUnderscore))
+                    continue;
+
+                sb.Append(mapped);
+                prevUnderscore = mapped == '_' || mapped == '-';
+            }
+
+            if (sb.Length == 0)
+                sb.Append("rule");
+
+            return sb.ToString().TrimEnd('_', '-');
+        }
+
+        private string WrapObject(IReadOnlyList<string> pairs)
+        {
+            if (pairs.Count == 0)
+                return UsesWhitespace ? "\"{\" ws \"}\"" : "\"{\" \"}\"";
+
+            string sep = UsesWhitespace ? " ws \",\" ws " : " \",\" ";
+            string inner = string.Join(sep, pairs);
+            return UsesWhitespace ? $"\"{{\" ws {inner} ws \"}}\"" : $"\"{{\" {inner} \"}}\"";
+        }
+
+        private string WrapArray(string inner)
+        {
+            return UsesWhitespace
+                ? $"{GbnfLiteral("[")} ws {inner} ws {GbnfLiteral("]")}"
+                : $"{GbnfLiteral("[")} {inner} {GbnfLiteral("]")}";
+        }
+
+        private string CommaSeparatedTail(string itemRule)
+        {
+            return UsesWhitespace
+                ? $"(ws \",\" ws {itemRule})*"
+                : $"(\",\" {itemRule})*";
+        }
+
+        private string MaybeWs() => UsesWhitespace ? " ws " : " ";
+
+        private static string JoinDistinctAlternatives(IEnumerable<string> variants)
+        {
+            string[] distinct = variants.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.Ordinal).ToArray();
+            return distinct.Length switch
+            {
+                0 => "string",
+                1 => distinct[0],
+                _ => string.Join(" | ", distinct),
+            };
+        }
+
+        private static JsonNode? ResolveJsonPointer(JsonNode root, string pointer, JsonObject? defs)
+        {
+            if (pointer == "#")
+                return root;
+
+            if (pointer.StartsWith("#/$defs/", StringComparison.Ordinal) && defs is not null)
+            {
+                string defKey = DecodePointerToken(pointer["#/$defs/".Length..]);
+                return defs[defKey];
+            }
+
+            if (!pointer.StartsWith("#/", StringComparison.Ordinal))
+                return null;
+
+            string[] segments = pointer[2..].Split('/');
+            JsonNode? current = root;
+            foreach (string rawSegment in segments)
+            {
+                string segment = DecodePointerToken(rawSegment);
+                if (current is JsonObject obj)
+                {
+                    current = obj[segment];
+                }
+                else if (current is JsonArray arr && int.TryParse(segment, out int index) && index >= 0 && index < arr.Count)
+                {
+                    current = arr[index];
+                }
+                else
+                {
+                    return null;
+                }
+            }
+
+            return current;
+        }
+
+        private static string DecodePointerToken(string token) => token.Replace("~1", "/").Replace("~0", "~");
+
+        private string RefPathToRuleName(string refPath)
+        {
+            if (refPath.StartsWith("#/$defs/", StringComparison.Ordinal))
+            {
+                string defKey = DecodePointerToken(refPath["#/$defs/".Length..]);
+                return NormalizeRuleName(defKey);
+            }
+
+            if (!refPath.StartsWith("#/", StringComparison.Ordinal))
+                return NormalizeRuleName(refPath);
+
+            var meaningful = refPath[2..]
+                .Split('/')
+                .Select(DecodePointerToken)
+                .Where(s => s is not "properties" and not "items" and not "$defs")
+                .Select(NormalizeRuleName)
+                .Where(s => s.Length > 0);
+
+            return NormalizeRuleName("ref_" + string.Join(_options.UseUnderscoreRuleNames ? "_" : "-", meaningful));
+        }
     }
 
-    /// <summary>
-    /// Returns a GBNF quoted literal that matches <paramref name="rawText"/> exactly.
-    /// E.g. <c>GbnfLiteral("{") → "{"</c> in GBNF.
-    /// </summary>
     private static string GbnfLiteral(string rawText)
     {
         var sb = new StringBuilder(rawText.Length + 2);
         sb.Append('"');
         foreach (char c in rawText)
         {
-            if (c is '"' or '\\') sb.Append('\\');
+            if (c is '"' or '\\')
+                sb.Append('\\');
             sb.Append(c);
         }
         sb.Append('"');
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Returns a GBNF literal matching a JSON property key with its surrounding quotes.
-    /// E.g. for <c>"name"</c> produces <c>"\"name\""</c> (matches the literal text <c>"name"</c>).
-    /// </summary>
-    private static string GbnfJsonKey(string propertyName) =>
-        GbnfLiteral('"' + propertyName + '"');
+    private static string GbnfJsonKey(string propertyName) => GbnfLiteral('"' + propertyName + '"');
 
-    private static JsonObject CloneSchemaWithType(JsonObject schema, string typeName)
-    {
-        var clone = (JsonObject)schema.DeepClone();
-        clone["type"] = JsonValue.Create(typeName);
-        return clone;
-    }
-
-    private static string ToRuleName(string propName)
-    {
-        // Convert camelCase / PascalCase to lowercase-hyphenated for GBNF rule names
-        var sb = new StringBuilder();
-        foreach (char c in propName)
-        {
-            if (char.IsUpper(c) && sb.Length > 0) sb.Append('-');
-            sb.Append(char.ToLowerInvariant(c));
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Resolves a JSON Pointer (<c>#/properties/left</c>) against <paramref name="root"/>.
-    /// </summary>
-    private static JsonNode? ResolveJsonPointer(JsonNode root, string pointer)
-    {
-        if (!pointer.StartsWith("#/", StringComparison.Ordinal)) return null;
-        string[] segments = pointer[2..].Split('/');
-        JsonNode? current = root;
-        foreach (string segment in segments)
-        {
-            if (current is JsonObject obj)
-                current = obj[segment];
-            else if (current is JsonArray arr && int.TryParse(segment, out int index) && index < arr.Count)
-                current = arr[index];
-            else
-                return null;
-        }
-        return current;
-    }
-
-    /// <summary>
-    /// Converts a JSON Pointer path to a GBNF rule name.
-    /// E.g. <c>#/properties/left/properties/right</c> → <c>ref-left-right</c>.
-    /// </summary>
-    private static string RefPathToRuleName(string refPath)
-    {
-        var meaningful = refPath[2..].Split('/')
-            .Where(s => s is not "properties" and not "items")
-            .Select(ToRuleName);
-        return "ref-" + string.Join("-", meaningful);
-    }
-
-    /// <summary>
-    /// Returns <see langword="true"/> when <paramref name="terminalName"/> appears in
-    /// <paramref name="body"/> as a standalone word (not as part of a longer rule name).
-    /// </summary>
-    private static bool ReferencesTerminal(string body, string terminalName)
+    private static bool ReferencesRule(string body, string ruleName)
     {
         int i = 0;
-        while ((i = body.IndexOf(terminalName, i, StringComparison.Ordinal)) >= 0)
+        while ((i = body.IndexOf(ruleName, i, StringComparison.Ordinal)) >= 0)
         {
-            bool prevOk = i == 0 || (body[i - 1] != '-' && !char.IsLetterOrDigit(body[i - 1]));
-            bool nextOk = i + terminalName.Length >= body.Length ||
-                          (body[i + terminalName.Length] != '-' && !char.IsLetterOrDigit(body[i + terminalName.Length]));
-            if (prevOk && nextOk) return true;
+            bool prevOk = i == 0 || !IsRuleChar(body[i - 1]);
+            bool nextOk = i + ruleName.Length >= body.Length || !IsRuleChar(body[i + ruleName.Length]);
+            if (prevOk && nextOk)
+                return true;
             i++;
         }
+
         return false;
     }
+
+    private static bool IsRuleChar(char c) => char.IsLetterOrDigit(c) || c is '_' or '-';
 }
+
 
 /// <summary>
 /// Typed structured-output helpers for <see cref="Session"/>.

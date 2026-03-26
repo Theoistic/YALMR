@@ -895,13 +895,13 @@ public static class Llama
         float frequencyPenalty = options.FrequencyPenalty.GetValueOrDefault();
         llama_sampler_chain_add(chain, llama_sampler_init_penalties(64, 1.0f, frequencyPenalty, presencePenalty));
 
-        llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature));
-
         int topK = options.TopK.GetValueOrDefault();
         llama_sampler_chain_add(chain, llama_sampler_init_top_k(topK > 0 ? topK : 0));
 
         float topP = options.TopP.GetValueOrDefault(1.0f);
         llama_sampler_chain_add(chain, llama_sampler_init_top_p(topP, 1));
+
+        llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature));
 
         uint seed = options.Seed.HasValue ? (uint)options.Seed.Value : (uint)random.Next();
         llama_sampler_chain_add(chain, llama_sampler_init_dist(seed));

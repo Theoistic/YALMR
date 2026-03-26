@@ -86,7 +86,6 @@ public sealed class StructuredOutputEdgeCaseTests(ITestOutputHelper output)
         string grammar = GbnfSchemaGenerator.FromType<WithList>();
         output.WriteLine(grammar);
 
-        Assert.Contains("-array ::=", grammar);
         Assert.Contains("\"[\"",      grammar);
         Assert.Contains("\"]\"",      grammar);
         AssertNoEmptyBodyRules(grammar);
@@ -98,7 +97,8 @@ public sealed class StructuredOutputEdgeCaseTests(ITestOutputHelper output)
         string grammar = GbnfSchemaGenerator.FromType<WithROList>();
         output.WriteLine(grammar);
 
-        Assert.Contains("-array ::=", grammar);
+        Assert.Contains("\"[\"", grammar);
+        Assert.Contains("\"]\"", grammar);
         AssertNoEmptyBodyRules(grammar);
     }
 
@@ -110,7 +110,8 @@ public sealed class StructuredOutputEdgeCaseTests(ITestOutputHelper output)
         string grammar = GbnfSchemaGenerator.FromType<Cart>();
         output.WriteLine(grammar);
 
-        Assert.Contains("-array ::=", grammar);
+        Assert.Contains("\"[\"", grammar);
+        Assert.Contains("\"]\"", grammar);
         AssertNoEmptyBodyRules(grammar);
     }
 
