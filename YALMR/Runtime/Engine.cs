@@ -249,8 +249,21 @@ public sealed class Engine : IAsyncDisposable, IDisposable
 
     private static string InferImageToken(string? template)
     {
+        if (template is null) return string.Empty;
+
         const string qwenVisionToken = "<|vision_start|><|image_pad|><|vision_end|>";
-        return template?.Contains(qwenVisionToken, StringComparison.Ordinal) == true ? qwenVisionToken : string.Empty;
+        if (template.Contains(qwenVisionToken, StringComparison.Ordinal))
+            return qwenVisionToken;
+
+        // InternVL, LLaVA, InternLM, LFS-VL and similar models use a plain <image> tag.
+        if (template.Contains("<image>", StringComparison.Ordinal))
+            return "<image>";
+
+        // Phi-3/4 vision models use <|image|> as the placeholder.
+        if (template.Contains("<|image|>", StringComparison.Ordinal))
+            return "<|image|>";
+
+        return string.Empty;
     }
 
     /// <summary>
