@@ -72,6 +72,7 @@ public sealed class YALMRApiServer : IAsyncDisposable
         routes.MapPost("/v1/chat", HandleChatAsync);
         routes.MapPost("/v1/sessions", HandleCreateSession);
         routes.MapPost("/v1/sessions/{id}/chat", HandleSessionChatAsync);
+        routes.MapGet("/v1/sessions/{id}/export", HandleExportSession);
         routes.MapDelete("/v1/sessions/{id}", HandleDeleteSessionAsync);
     }
 
@@ -238,6 +239,58 @@ public sealed class YALMRApiServer : IAsyncDisposable
             Message: new ApiMessage("assistant", reply.Content ?? string.Empty),
             FinishReason: "stop"));
     }
+
+    // ─── GET /v1/sessions/{id}/export ────────────────────────────────────────
+
+    private IResult HandleExportSession(
+        string id, HttpContext ctx,
+        string? format = null, string? reasoning = null,
+        string? tools = null, string? images = null)
+    {
+        if (!_server.TryGetSession(id, out var session))
+            return Error(404, "not_found", $"session '{id}' does not exist", "session_not_found");
+
+        var options = new TrainingExportOptions
+        {
+            Format        = ParseTrainingFormat(format),
+            ReasoningMode = ParseReasoningMode(reasoning),
+            ToolCallMode  = ParseToolCallMode(tools),
+            ImageMode     = ParseImageMode(images),
+        };
+
+        string jsonl = TrainingExporter.Export(session.Conversation, options);
+        ctx.Response.Headers["Content-Disposition"] = $"attachment; filename=\"conversation.jsonl\"";
+        return Results.Text(jsonl, "application/x-ndjson");
+    }
+
+    private static TrainingFormat ParseTrainingFormat(string? s) => s?.ToLowerInvariant() switch
+    {
+        "sharegpt" => TrainingFormat.ShareGPT,
+        "chatml"   => TrainingFormat.ChatML,
+        "alpaca"   => TrainingFormat.Alpaca,
+        _          => TrainingFormat.OpenAI
+    };
+
+    private static ReasoningExportMode ParseReasoningMode(string? s) => s?.ToLowerInvariant() switch
+    {
+        "inline"         => ReasoningExportMode.Inline,
+        "separate_field" => ReasoningExportMode.SeparateField,
+        _                => ReasoningExportMode.Omit
+    };
+
+    private static ToolCallExportMode ParseToolCallMode(string? s) => s?.ToLowerInvariant() switch
+    {
+        "structured" => ToolCallExportMode.Structured,
+        "inline"     => ToolCallExportMode.Inline,
+        _            => ToolCallExportMode.Omit
+    };
+
+    private static ImageExportMode ParseImageMode(string? s) => s?.ToLowerInvariant() switch
+    {
+        "inline_base64" => ImageExportMode.InlineBase64,
+        "placeholder"   => ImageExportMode.Placeholder,
+        _               => ImageExportMode.Omit
+    };
 
     // ─── DELETE /v1/sessions/{id} ─────────────────────────────────────────────
 

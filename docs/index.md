@@ -41,6 +41,7 @@ YALMR is a lightweight, high-performance .NET library that lets you run large la
 | [Conversation Compaction](features/conversation-compaction) | Automatic context-window management with pluggable summarisation or truncation strategies |
 | [MCP Integration](features/mcp-integration) | Delegate tool calls to stdio or HTTP Model Context Protocol servers |
 | [Multi-Model Server](features/multi-model-server) | `YALMRServer` hosts multiple named engines and exposes an OpenAI-compatible HTTP API |
+| [Training Data Export](features/training-export) | Export conversations as JSONL for OpenAI, ShareGPT, ChatML, and Alpaca finetuning frameworks |
 
 ---
 

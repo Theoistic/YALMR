@@ -84,6 +84,19 @@ class YALMRClient {
         this.#model = null;
     }
 
+    /**
+     * Exports the active session's conversation as a JSONL string.
+     * @param {{ format?: string, reasoning?: string, tools?: string, images?: string }} options
+     * @returns {Promise<string>} The JSONL content ready for download.
+     */
+    async exportConversation({ format = 'openai', reasoning = 'omit', tools = 'omit', images = 'omit' } = {}) {
+        if (!this.#sessionId) throw new Error('No active session — call createSession() first.');
+        const params = new URLSearchParams({ format, reasoning, tools, images });
+        const res = await fetch(`${this.#baseUrl}/v1/sessions/${this.#sessionId}/export?${params}`);
+        if (!res.ok) throw new Error(`exportConversation: HTTP ${res.status}`);
+        return res.text();
+    }
+
     async #consumeSse(res, { onToken, onThinking, onToolCall, onToolResult, onEnd } = {}) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();

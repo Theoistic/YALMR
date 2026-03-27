@@ -44,8 +44,8 @@ public sealed class Session : IAsyncDisposable, IDisposable
     private readonly SessionOptions _options;
     private readonly Engine _engine;
     private readonly InferenceContext _inferenceContext;
-    private readonly List<ChatMessage> _history = [];
-    private readonly Dictionary<string, IReadOnlyList<ChatMessage>> _responseHistories = new(StringComparer.Ordinal);
+    private readonly Conversation _history = new();
+    private readonly Dictionary<string, Conversation> _responseHistories = new(StringComparer.Ordinal);
 
     private readonly InferenceOptions _defaultInference;
     private readonly ConversationCompactionOptions _compaction;
@@ -62,6 +62,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
 
     public bool VisionEnabled => _engine.VisionEnabled;
     public string? VisionDisabledReason => _engine.VisionDisabledReason;
+    public Conversation Conversation => _history;
     public IReadOnlyList<ChatMessage> History => _history;
     public ResponseObject? LastResponse { get; private set; }
     public InferenceOptions DefaultInference => _defaultInference;
@@ -136,6 +137,30 @@ public sealed class Session : IAsyncDisposable, IDisposable
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
         _history.Add(message);
+    }
+
+    /// <summary>
+    /// Saves the current conversation to a file for later retrieval or training data export.
+    /// </summary>
+    public Task SaveConversationAsync(string path, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        return _history.SaveAsync(path, ct);
+    }
+
+    /// <summary>
+    /// Loads a previously saved conversation, replacing the current session history.
+    /// </summary>
+    public async Task LoadConversationAsync(string path, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        var loaded = await Conversation.LoadAsync(path, ct).ConfigureAwait(false);
+        _history.Clear();
+        _history.AddRange(loaded);
+        _history.Id = loaded.Id;
+        _history.ModelName = loaded.ModelName;
+        _history.CreatedAt = loaded.CreatedAt;
+        _history.Metadata = loaded.Metadata;
     }
 
     private void ResetCore(bool clearResponses)
@@ -223,7 +248,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
             activity?.SetTag("gen_ai.request.model", request.Model);
 
             bool isReentrant = s_reentrancyOwner.Value == this;
-            List<ChatMessage>? savedHistory = null;
+            Conversation? savedHistory = null;
 
             if (isReentrant)
                 savedHistory = SaveHistorySnapshot();
@@ -285,7 +310,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
         ThrowIfDisposed();
 
         bool isReentrant = s_reentrancyOwner.Value == this;
-        List<ChatMessage>? savedHistory = null;
+        Conversation? savedHistory = null;
 
         if (isReentrant)
             savedHistory = SaveHistorySnapshot();
@@ -367,7 +392,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
         ThrowIfDisposed();
 
         bool isReentrant = s_reentrancyOwner.Value == this;
-        List<ChatMessage>? savedHistory = null;
+        Conversation? savedHistory = null;
 
         if (isReentrant)
             savedHistory = SaveHistorySnapshot();
@@ -401,7 +426,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
         ThrowIfDisposed();
 
         bool isReentrant = s_reentrancyOwner.Value == this;
-        List<ChatMessage>? savedHistory = null;
+        Conversation? savedHistory = null;
 
         if (isReentrant)
             savedHistory = SaveHistorySnapshot();
@@ -585,10 +610,10 @@ public sealed class Session : IAsyncDisposable, IDisposable
 
     private IReadOnlyList<ChatMessage> GetResponseHistory(string responseId)
     {
-        if (!_responseHistories.TryGetValue(responseId, out var history))
+        if (!_responseHistories.TryGetValue(responseId, out var conversation))
             throw new InvalidOperationException($"Unknown previous_response_id '{responseId}'.");
 
-        return [.. history];
+        return [.. conversation];
     }
 
     private ResponseObject FinalizeResponse(string model, string? previousResponseId, int historyPrefixCount)
@@ -604,7 +629,7 @@ public sealed class Session : IAsyncDisposable, IDisposable
             Usage: usage,
             PreviousResponseId: previousResponseId);
 
-        _responseHistories[responseId] = [.. _history];
+        _responseHistories[responseId] = _history.Snapshot();
         LastResponse = response;
         return response;
     }
@@ -660,9 +685,9 @@ public sealed class Session : IAsyncDisposable, IDisposable
     /// </summary>
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
-    private List<ChatMessage> SaveHistorySnapshot() => [.. _history];
+    private Conversation SaveHistorySnapshot() => _history.Snapshot();
 
-    private void RestoreAfterReentrantCall(List<ChatMessage> savedHistory)
+    private void RestoreAfterReentrantCall(Conversation savedHistory)
     {
         _history.Clear();
         _history.AddRange(savedHistory);
