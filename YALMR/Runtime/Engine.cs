@@ -255,6 +255,11 @@ public sealed class Engine : IAsyncDisposable, IDisposable
         if (template.Contains(qwenVisionToken, StringComparison.Ordinal))
             return qwenVisionToken;
 
+        // LightOnOCR-2 and similar models use a standalone <|image_pad|> token.
+        const string imagePadToken = "<|image_pad|>";
+        if (template.Contains(imagePadToken, StringComparison.Ordinal))
+            return imagePadToken;
+
         // InternVL, LLaVA, InternLM, LFS-VL and similar models use a plain <image> tag.
         if (template.Contains("<image>", StringComparison.Ordinal))
             return "<image>";
