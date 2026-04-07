@@ -251,15 +251,17 @@ public sealed class Engine : IAsyncDisposable, IDisposable
     {
         if (template is null) return string.Empty;
 
-        // Qwen-style triple marker takes precedence (most specific match).
         const string qwenVisionToken = "<|vision_start|><|image_pad|><|vision_end|>";
         if (template.Contains(qwenVisionToken, StringComparison.Ordinal))
             return qwenVisionToken;
 
-        // Standalone <|image_pad|> used by LightOn OCR-2 and similar models.
-        const string imagePadToken = "<|image_pad|>";
-        if (template.Contains(imagePadToken, StringComparison.Ordinal))
-            return imagePadToken;
+        // InternVL, LLaVA, InternLM, LFS-VL and similar models use a plain <image> tag.
+        if (template.Contains("<image>", StringComparison.Ordinal))
+            return "<image>";
+
+        // Phi-3/4 vision models use <|image|> as the placeholder.
+        if (template.Contains("<|image|>", StringComparison.Ordinal))
+            return "<|image|>";
 
         return string.Empty;
     }

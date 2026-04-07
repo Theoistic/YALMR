@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json.Serialization;
 using YALMR.Diagnostics;
 using YALMR.LlamaCpp;
 using YALMR.Utils;
@@ -7,6 +8,9 @@ namespace YALMR.Runtime;
 
 // ── Multimodal content ──────────────────────────────────────────────
 
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(TextPart), "text")]
+[JsonDerivedType(typeof(ImagePart), "image")]
 public abstract record ContentPart;
 public sealed record TextPart(string Text) : ContentPart;
 

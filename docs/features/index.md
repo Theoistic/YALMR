@@ -19,3 +19,4 @@ YALMR provides a comprehensive set of features for running local LLMs in .NET:
 | [Conversation Compaction](conversation-compaction) | Automatic context-window management with pluggable strategies |
 | [MCP Integration](mcp-integration) | Delegate tool calls to stdio or HTTP MCP servers |
 | [Multi-Model Server](multi-model-server) | Host multiple models and expose an OpenAI-compatible HTTP API |
+| [Training Data Export](training-export) | Export conversations as JSONL for OpenAI, ShareGPT, ChatML, and Alpaca finetuning frameworks |

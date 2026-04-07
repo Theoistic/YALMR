@@ -523,6 +523,23 @@
                 color: #fff;
             }
 
+        .setting-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            font: inherit;
+            font-size: 0.82rem;
+            padding: 5px 8px;
+            outline: none;
+            cursor: pointer;
+            width: 100%;
+        }
+
+            .setting-select:focus {
+                border-color: rgba(255, 255, 255, 0.2);
+            }
+
         /* Typing indicator */
         .typing {
             font-size: 0.75rem;
@@ -578,6 +595,46 @@
                     <button id="restart-session" class="restart-btn">↺ Apply &amp; Restart Session</button>
                 </div>
             </div>
+            <div id="export-panel" class="settings-panel" hidden>
+                <div class="settings-grid">
+                    <label class="setting-item">
+                        <span class="setting-label">Format</span>
+                        <select id="export-format" class="setting-select">
+                            <option value="openai">OpenAI (messages)</option>
+                            <option value="sharegpt">ShareGPT (conversations)</option>
+                            <option value="chatml">ChatML (text)</option>
+                            <option value="alpaca">Alpaca (instruction)</option>
+                        </select>
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Reasoning</span>
+                        <select id="export-reasoning" class="setting-select">
+                            <option value="omit">Omit</option>
+                            <option value="inline">&lt;think&gt; inline</option>
+                            <option value="separate_field">Separate field</option>
+                        </select>
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Tool calls</span>
+                        <select id="export-tools" class="setting-select">
+                            <option value="omit">Omit</option>
+                            <option value="structured">Structured</option>
+                            <option value="inline">&lt;tool_call&gt; inline</option>
+                        </select>
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Images</span>
+                        <select id="export-images" class="setting-select">
+                            <option value="omit">Omit</option>
+                            <option value="inline_base64">Inline base64</option>
+                            <option value="placeholder">[image] placeholder</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="settings-footer">
+                    <button id="do-export" class="restart-btn">↓ Download JSONL</button>
+                </div>
+            </div>
             <div class="input-panel">
                 <div id="attachment-preview"></div>
 
@@ -619,6 +676,13 @@
                                 <line x1="16" x2="16" y1="18" y2="22" />
                             </svg>
                         </button>
+                        <button class="action-btn" id="export-btn" title="Export conversation" disabled>
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-linecap="round" stroke-linejoin="round" />
+                                <polyline points="7 10 12 15 17 10" stroke-linecap="round" stroke-linejoin="round" />
+                                <line x1="12" y1="15" x2="12" y2="3" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        </button>
                     </div>
 
                     <button class="action-btn" id="send" title="Send message">
@@ -653,6 +717,8 @@
         const toppSlider = document.getElementById('setting-topp');
         const maxtokensSlider = document.getElementById('setting-maxtokens');
         const systemPromptEl = document.getElementById('setting-system');
+        const exportBtn = document.getElementById('export-btn');
+        const exportPanel = document.getElementById('export-panel');
 
         marked.use({ gfm: true, breaks: true });
 
@@ -743,6 +809,7 @@
 
                 modelContextLength = model.context_length || 0;
                 sendBtn.disabled = false;
+                exportBtn.disabled = false;
                 promptEl.focus();
                 autoResizePrompt();
             } catch (e) {
@@ -891,6 +958,36 @@
         settingsBtn.addEventListener('click', () => {
             settingsPanel.hidden = !settingsPanel.hidden;
             settingsBtn.classList.toggle('active', !settingsPanel.hidden);
+            exportPanel.hidden = true;
+            exportBtn.classList.remove('active');
+        });
+
+        exportBtn.addEventListener('click', () => {
+            exportPanel.hidden = !exportPanel.hidden;
+            exportBtn.classList.toggle('active', !exportPanel.hidden);
+            settingsPanel.hidden = true;
+            settingsBtn.classList.remove('active');
+        });
+
+        document.getElementById('do-export').addEventListener('click', async () => {
+            const format    = document.getElementById('export-format').value;
+            const reasoning = document.getElementById('export-reasoning').value;
+            const tools     = document.getElementById('export-tools').value;
+            const images    = document.getElementById('export-images').value;
+            try {
+                const jsonl = await client.exportConversation({ format, reasoning, tools, images });
+                const blob = new Blob([jsonl], { type: 'application/x-ndjson' });
+                const url  = URL.createObjectURL(blob);
+                const a    = document.createElement('a');
+                a.href     = url;
+                a.download = `conversation_${format}.jsonl`;
+                a.click();
+                URL.revokeObjectURL(url);
+                exportPanel.hidden = true;
+                exportBtn.classList.remove('active');
+            } catch (e) {
+                console.error('Export failed:', e);
+            }
         });
 
         tempSlider.addEventListener('input', () => { document.getElementById('temp-value').textContent = tempSlider.value; });
