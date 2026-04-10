@@ -76,9 +76,10 @@ internal static class SessionParsing
     public static string GetStreamingVisibleContent(string content)
     {
         string visible = RemoveStreamingDelimitedBlock(content, "<|tool_call_start|>", "<|tool_call_end|>");
+        visible = RemoveStreamingDelimitedBlock(visible, "<|tool_call>", "<tool_call|>");
         visible = RemoveStreamingDelimitedBlock(visible, "<tool_call>", "</tool_call>");
         visible = RemoveStreamingDelimitedBlock(visible, "<tool_code>", "</tool_code>");
-        return TrimTrailingTagPrefix(visible, "<|tool_call_start|>", "<|tool_call_end|>", "<tool_call>", "</tool_call>", "<tool_code>", "</tool_code>");
+        return TrimTrailingTagPrefix(visible, "<|tool_call_start|>", "<|tool_call_end|>", "<|tool_call>", "<tool_call|>", "<tool_call>", "</tool_call>", "<tool_code>", "</tool_code>");
     }
 
     public static IReadOnlyList<ChatMessage> ApplyImageRetentionPolicy(IReadOnlyList<ChatMessage> messages, ImageRetentionPolicy policy)

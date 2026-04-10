@@ -32,6 +32,9 @@ public static class MiniJinjaChatTemplate
         if (TryParseLfmToolCalls(text, out calls))
             return true;
 
+        if (TryParseGemma4ToolCalls(text, out calls))
+            return true;
+
         if (TryParseXmlToolCalls(text, out calls))
             return true;
 
@@ -44,6 +47,7 @@ public static class MiniJinjaChatTemplate
     public static string StripToolCallMarkup(string text)
     {
         string cleaned = RemoveDelimitedBlocks(text, "<|tool_call_start|>", "<|tool_call_end|>");
+        cleaned = RemoveDelimitedBlocks(cleaned, "<|tool_call>", "<tool_call|>");
         cleaned = RemoveDelimitedBlocks(cleaned, "<tool_call>", "</tool_call>");
         cleaned = Regex.Replace(cleaned, "<tool_code>\\s*.*?\\s*</tool_code>", string.Empty, RegexOptions.Singleline | RegexOptions.IgnoreCase);
         cleaned = cleaned.Replace("<think>", string.Empty, StringComparison.Ordinal);
@@ -271,12 +275,14 @@ public static class MiniJinjaChatTemplate
         private readonly List<string> _variables;
         private readonly Expr _iterable;
         private readonly List<TemplateNode> _body;
+        private readonly Expr? _filter;
 
-        public ForNode(List<string> variables, Expr iterable, List<TemplateNode> body)
+        public ForNode(List<string> variables, Expr iterable, List<TemplateNode> body, Expr? filter = null)
         {
             _variables = variables;
             _iterable = iterable;
             _body = body;
+            _filter = filter;
         }
 
         public override void Render(RuntimeContext context, StringBuilder sb)
@@ -292,6 +298,21 @@ public static class MiniJinjaChatTemplate
                 throw new InvalidOperationException($"Object of type '{value.GetType().Name}' is not iterable.");
 
             var items = enumerable.Cast<object?>().ToList();
+
+            if (_filter is not null)
+            {
+                var filtered = new List<object?>();
+                foreach (var item in items)
+                {
+                    context.PushScope();
+                    BindLoopVariables(context, item);
+                    bool pass = IsTruthy(_filter.Evaluate(context));
+                    context.PopScope();
+                    if (pass)
+                        filtered.Add(item);
+                }
+                items = filtered;
+            }
 
             for (int i = 0; i < items.Count; i++)
             {
@@ -538,12 +559,20 @@ public static class MiniJinjaChatTemplate
             if (variables.Count == 0)
                 throw new InvalidOperationException($"Invalid for statement: {statement}");
 
+            Expr? filterExpr = null;
+            int ifPos = IndexOfTopLevelKeyword(rhs, "if");
+            if (ifPos >= 0)
+            {
+                filterExpr = ParseExpr(rhs[(ifPos + 2)..].Trim());
+                rhs = rhs[..ifPos].Trim();
+            }
+
             var loopBody = ParseUntil("endfor");
 
             ExpectStatement("endfor");
             _pos++;
 
-            return new ForNode(variables, ParseExpr(rhs), loopBody);
+            return new ForNode(variables, ParseExpr(rhs), loopBody, filterExpr);
         }
 
         private TemplateNode ParseIf()
@@ -789,6 +818,44 @@ public static class MiniJinjaChatTemplate
 
                 if (leftOk && rightOk)
                     return i;
+            }
+
+            return -1;
+        }
+
+        private static int IndexOfTopLevelKeyword(string s, string keyword)
+        {
+            int depth = 0;
+            bool inSingle = false;
+            bool inDouble = false;
+
+            for (int i = 0; i <= s.Length - keyword.Length; i++)
+            {
+                char c = s[i];
+
+                if (inSingle)
+                {
+                    if (c == '\'' && (i == 0 || s[i - 1] != '\\')) inSingle = false;
+                    continue;
+                }
+                if (inDouble)
+                {
+                    if (c == '"' && (i == 0 || s[i - 1] != '\\')) inDouble = false;
+                    continue;
+                }
+
+                if (c == '\'') { inSingle = true; continue; }
+                if (c == '"')  { inDouble = true; continue; }
+                if (c is '(' or '[' or '{') { depth++; continue; }
+                if (c is ')' or ']' or '}') { depth--; continue; }
+
+                if (depth == 0 &&
+                    string.CompareOrdinal(s, i, keyword, 0, keyword.Length) == 0 &&
+                    (i == 0 || char.IsWhiteSpace(s[i - 1])) &&
+                    (i + keyword.Length == s.Length || char.IsWhiteSpace(s[i + keyword.Length])))
+                {
+                    return i;
+                }
             }
 
             return -1;
@@ -1422,8 +1489,9 @@ public static class MiniJinjaChatTemplate
             if (Match(ExprTokenKind.If))
             {
                 Expr condition = ParseExpression();
-                Expect(ExprTokenKind.Else);
-                Expr whenFalse = ParseExpression();
+                Expr whenFalse = Match(ExprTokenKind.Else)
+                    ? ParseExpression()
+                    : new LiteralExpr(Undefined.Value);
                 return new ConditionalExpr(expr, condition, whenFalse);
             }
 
@@ -2513,6 +2581,7 @@ public static class MiniJinjaChatTemplate
             "safe" => value,
             "string" => Stringify(value),
             "items" => ItemsFilter(value),
+            "dictsort" => DictSortFilter(value),
             _ => throw new InvalidOperationException($"Unsupported filter '{name}'.")
         };
     }
@@ -2559,6 +2628,26 @@ public static class MiniJinjaChatTemplate
         }
 
         throw new InvalidOperationException("items filter requires a mapping.");
+    }
+
+    private static object DictSortFilter(object? value)
+    {
+        if (value is IDictionary<string, object?> dict)
+            return dict.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                       .Select(kv => (object?)(new object?[] { kv.Key, kv.Value }))
+                       .ToList();
+
+        if (value is IDictionary dictObj)
+        {
+            var result = new List<object?>();
+            var sorted = dictObj.Keys.Cast<object?>()
+                               .OrderBy(k => k?.ToString() ?? "", StringComparer.Ordinal);
+            foreach (var key in sorted)
+                result.Add(new object?[] { key?.ToString() ?? "", dictObj[key] });
+            return result;
+        }
+
+        throw new InvalidOperationException("dictsort filter requires a mapping.");
     }
 
     private static string Stringify(object? value)
@@ -2624,6 +2713,129 @@ public static class MiniJinjaChatTemplate
         }
 
         return calls.Count > 0;
+    }
+
+    // Parses the Gemma 4 format: <|tool_call>call:name{key:<|"|>str<|"|>,key2:42}<tool_call|>
+    private static bool TryParseGemma4ToolCalls(string text, out List<ToolCall> calls)
+    {
+        calls = new();
+
+        const string open = "<|tool_call>";
+        const string close = "<tool_call|>";
+        const string callPrefix = "call:";
+
+        int pos = 0;
+        while (true)
+        {
+            int tcStart = text.IndexOf(open, pos, StringComparison.Ordinal);
+            if (tcStart < 0) break;
+
+            int tcEnd = text.IndexOf(close, tcStart + open.Length, StringComparison.Ordinal);
+            if (tcEnd < 0) return false;
+
+            string body = text.Substring(tcStart + open.Length, tcEnd - (tcStart + open.Length)).Trim();
+
+            if (!body.StartsWith(callPrefix, StringComparison.Ordinal))
+                return false;
+
+            body = body[callPrefix.Length..];
+
+            int braceStart = body.IndexOf('{');
+            if (braceStart < 0) return false;
+
+            string funcName = body[..braceStart].Trim();
+            if (string.IsNullOrEmpty(funcName)) return false;
+
+            int braceEnd = body.LastIndexOf('}');
+            if (braceEnd <= braceStart) return false;
+
+            string argsBody = body.Substring(braceStart + 1, braceEnd - braceStart - 1);
+            calls.Add(new ToolCall(funcName, ParseGemma4Args(argsBody)));
+
+            pos = tcEnd + close.Length;
+        }
+
+        return calls.Count > 0;
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseGemma4Args(string body)
+    {
+        const string strDelim = "<|\"|>";
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+        int i = 0;
+
+        while (i < body.Length)
+        {
+            while (i < body.Length && (body[i] == ',' || char.IsWhiteSpace(body[i])))
+                i++;
+            if (i >= body.Length) break;
+
+            int colonIdx = body.IndexOf(':', i);
+            if (colonIdx < 0) break;
+
+            string key = body[i..colonIdx].Trim();
+            i = colonIdx + 1;
+
+            while (i < body.Length && char.IsWhiteSpace(body[i]))
+                i++;
+
+            result[key] = ParseGemma4ArgValue(body, strDelim, ref i);
+        }
+
+        return result;
+    }
+
+    private static object? ParseGemma4ArgValue(string body, string strDelim, ref int i)
+    {
+        if (i >= body.Length) return null;
+
+        if (i + strDelim.Length <= body.Length &&
+            body.AsSpan(i, strDelim.Length).SequenceEqual(strDelim.AsSpan()))
+        {
+            i += strDelim.Length;
+            int end = body.IndexOf(strDelim, i, StringComparison.Ordinal);
+            if (end < 0) { i = body.Length; return null; }
+            string val = body[i..end];
+            i = end + strDelim.Length;
+            return val;
+        }
+
+        if (body[i] == '{') return Gemma4ConsumeNested(body, '{', '}', strDelim, ref i);
+        if (body[i] == '[') return Gemma4ConsumeNested(body, '[', ']', strDelim, ref i);
+
+        int scalarEnd = i;
+        while (scalarEnd < body.Length && body[scalarEnd] != ',' && body[scalarEnd] != '}' && body[scalarEnd] != ']')
+            scalarEnd++;
+
+        string scalar = body[i..scalarEnd].Trim();
+        i = scalarEnd;
+
+        if (scalar.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (scalar.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
+        if (long.TryParse(scalar, out long lv)) return lv;
+        if (double.TryParse(scalar, NumberStyles.Float, CultureInfo.InvariantCulture, out double dv)) return dv;
+        return scalar;
+    }
+
+    private static string Gemma4ConsumeNested(string body, char open, char close, string strDelim, ref int i)
+    {
+        int start = i;
+        int depth = 0;
+        while (i < body.Length)
+        {
+            if (i + strDelim.Length <= body.Length &&
+                body.AsSpan(i, strDelim.Length).SequenceEqual(strDelim.AsSpan()))
+            {
+                i += strDelim.Length;
+                int strEnd = body.IndexOf(strDelim, i, StringComparison.Ordinal);
+                i = strEnd >= 0 ? strEnd + strDelim.Length : body.Length;
+                continue;
+            }
+            if (body[i] == open) depth++;
+            else if (body[i] == close) { depth--; if (depth == 0) { i++; break; } }
+            i++;
+        }
+        return body[start..i];
     }
 
     private static bool TryParseXmlToolCalls(string text, out List<ToolCall> calls)

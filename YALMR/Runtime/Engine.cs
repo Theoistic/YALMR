@@ -286,12 +286,26 @@ public sealed class Engine : IAsyncDisposable, IDisposable
             if (messages[i].Role == "system") throw new InvalidOperationException("System message must be first.");
     }
 
-    internal static object BuildPromptTool(ToolDefinition tool) => new
+    internal static object BuildPromptTool(ToolDefinition tool)
     {
-        name = tool.Name,
-        description = tool.Description,
-        parameters = tool.Parameters ?? new { type = "object" }
-    };
+        // Wrap in both a top-level shape (used by Qwen-style templates that access tool['name'])
+        // and a 'function' subobject (used by OpenAI-style and Gemma 4 templates that access
+        // tool['function']['name']).
+        var fn = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["name"] = tool.Name,
+            ["description"] = tool.Description ?? string.Empty,
+            ["parameters"] = tool.Parameters ?? new { type = "object" }
+        };
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["type"] = tool.Type,
+            ["function"] = fn,
+            ["name"] = tool.Name,
+            ["description"] = tool.Description ?? string.Empty,
+            ["parameters"] = tool.Parameters ?? new { type = "object" }
+        };
+    }
 
     internal static Dictionary<string, object?> BuildTemplateMessage(ChatMessage message)
     {
